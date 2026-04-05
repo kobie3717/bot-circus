@@ -1,0 +1,11 @@
+node_modules/
+.env
+.env.local
+*.log
+logs/
+performers/*/workspace/memory/
+performers/*/sessions/
+.DS_Store
+dist/
+build/
+coverage/
