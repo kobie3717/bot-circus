@@ -1,0 +1,24 @@
+{
+  "worker_pool": {
+    "max_workers": 10,
+    "idle_timeout_ms": 60000,
+    "request_timeout_ms": 120000
+  },
+  "global_rate_limits": {
+    "claude_requests_per_minute": 100,
+    "telegram_messages_per_second": 30
+  },
+  "memory": {
+    "global_docs_path": "./global/",
+    "auto_link_global": true
+  },
+  "logging": {
+    "level": "info",
+    "rotation": "daily",
+    "retention_days": 30
+  },
+  "telemetry": {
+    "enable_metrics": true,
+    "metrics_port": 9090
+  }
+}
