@@ -1,0 +1,26 @@
+{
+  "name": "bot-circus",
+  "version": "1.0.0",
+  "description": "Multi-bot Telegram orchestrator with per-bot persona, shared/ringfenced memory, and passport-gated access control. The access-control layer of the Claw Stack (Memory → Credential → Access).",
+  "author": {
+    "name": "kobie3717",
+    "url": "https://github.com/kobie3717"
+  },
+  "homepage": "https://github.com/kobie3717/bot-circus",
+  "repository": "https://github.com/kobie3717/bot-circus",
+  "license": "MIT",
+  "keywords": [
+    "telegram",
+    "bot",
+    "multi-agent",
+    "orchestrator",
+    "claude",
+    "shared-memory",
+    "access-control",
+    "passport",
+    "ringfence",
+    "troupe",
+    "claw-stack"
+  ],
+  "skills": "skills"
+}

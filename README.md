@@ -4,6 +4,16 @@
 
 **Status:** Production-ready MVP
 
+> **Part of the Claw Stack:** Bot-Circus is the access-control layer of a larger pipeline —
+> **Memory → Evaluation → Credential → Access Control**. Pairs with [`ai-iq`](https://github.com/kobie3717/ai-iq)
+> for passport-gated memory sharing between agents. Runs standalone or as part of the full stack.
+>
+> Install both as Claude Code plugins:
+> ```
+> /plugin marketplace add kobie3717/bot-circus
+> /plugin marketplace add kobie3717/ai-iq
+> ```
+
 ## What is Bot-Circus?
 
 Bot-Circus is a multi-bot Telegram orchestrator that runs **up to 100 independent AI-powered bots** on a single VPS, each powered by [Claude Code CLI](https://claude.com/claude-code).
