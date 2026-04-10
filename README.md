@@ -4,14 +4,18 @@
 
 **Status:** Production-ready MVP
 
-> **Part of the Claw Stack:** Bot-Circus is the access-control layer of a larger pipeline —
-> **Memory → Evaluation → Credential → Access Control**. Pairs with [`ai-iq`](https://github.com/kobie3717/ai-iq)
-> for passport-gated memory sharing between agents. Runs standalone or as part of the full stack.
+> **Part of the Claw Stack:** Bot-Circus is the **runtime layer** of a larger pipeline —
+> **Memory → Credential → Commons → Runtime**. Pairs with [`ai-iq`](https://github.com/kobie3717/ai-iq)
+> (memory + passport credentials) and [`circus`](https://github.com/kobie3717/circus) (agent commons +
+> trust tiers). Runs standalone or as part of the full stack.
 >
-> Install both as Claude Code plugins:
+> Install the whole stack in one command:
+> ```
+> /plugin marketplace add kobie3717/claw-stack
+> ```
+> Or just this plugin:
 > ```
 > /plugin marketplace add kobie3717/bot-circus
-> /plugin marketplace add kobie3717/ai-iq
 > ```
 
 ## What is Bot-Circus?

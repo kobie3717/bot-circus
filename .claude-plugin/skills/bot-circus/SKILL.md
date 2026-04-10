@@ -1,6 +1,6 @@
 ---
-name: circus
-description: Multi-bot Telegram orchestrator with per-bot persona, shared/ringfenced memory, and passport-gated access control. Use for running multiple AI agents with different personalities that can collaborate via shared memory or stay isolated.
+name: bot-circus
+description: Multi-bot Telegram orchestrator with per-bot persona, shared/ringfenced memory, and passport-gated access control. The runtime layer of the Claw Stack — pairs with `circus` (agent commons) and `ai-iq` (memory + credentials). Use for running multiple AI agents with different personalities that can collaborate via shared memory or stay isolated.
 ---
 
 # Bot-Circus 🎪
