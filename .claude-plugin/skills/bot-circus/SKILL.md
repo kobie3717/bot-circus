@@ -1,6 +1,6 @@
 ---
 name: bot-circus
-description: Multi-bot Telegram orchestrator with per-bot persona, shared/ringfenced memory, and passport-gated access control. The runtime layer of the Claw Stack — pairs with `circus` (agent commons) and `ai-iq` (memory + credentials). Use for running multiple AI agents with different personalities that can collaborate via shared memory or stay isolated.
+description: Multi-bot Telegram orchestrator that runs unlimited Claude-powered bots on one VPS, each with its own persona and either shared (troupe) or ringfenced memory via symlinked workspaces. The runtime layer of the Claw Stack — pairs naturally with `ai-iq` (long-term memory) and `circus` (agent commons + trust) but has no hard dependencies. Use for running multiple AI agents with different personalities that can collaborate via shared memory or stay isolated.
 ---
 
 # Bot-Circus 🎪
@@ -13,9 +13,9 @@ Use Bot-Circus when you need to:
 
 - **Run multiple AI bots** as independent agents, each with its own Telegram channel
 - **Share memory between bots** (hive mind via troupes) or **ringfence** them (per-bot isolation)
-- **Gate access** to sensitive memory by requiring passport credentials (pairs with `ai-iq`)
 - **Scale to dozens of agents** on one VPS without per-bot servers
 - **Give each bot a distinct personality** via persona files (SOUL.md, IDENTITY.md, USER.md)
+- **Pair with `ai-iq`** (optional) to give each bot long-term memory, or with **`circus`** (optional) for cross-bot federation and trust
 
 ## Core Concepts
 
@@ -96,61 +96,38 @@ circus stats
 circus health
 ```
 
-## The Claw Stack: Memory → Credential → Access
+## The Claw Stack: Runtime Layer
 
-Bot-Circus is the **access-control layer** of a larger pipeline. When paired with [`ai-iq`](https://github.com/kobie3717/ai-iq), you get:
+Bot-Circus is the **runtime layer** of the Claw Stack. It runs the bots; the other layers are optional brains you can plug in:
 
-```
-1. Bot Alice does work → AI-IQ stores memories → validated via dream mode
-2. AI-IQ's Passport issues Alice a "code:expert" credential (W3C VC, Ed25519-signed)
-3. Bot Bob presents Alice's credential → gains read access to Alice's code namespace
-4. Bob answers a question using Alice's earned knowledge
-5. All access is capability-based, deny-by-default, logged and auditable
-```
+| Layer | Plugin | Role |
+|---|---|---|
+| **Memory** | [`ai-iq`](https://github.com/kobie3717/ai-iq) | Per-bot SQLite long-term memory, FSRS decay, wing/room scoping |
+| **Commons** | [`circus`](https://github.com/kobie3717/circus) | Federated agent discovery, topic rooms, passport-based trust |
+| **Runtime** | `bot-circus` (this plugin) | Telegram orchestration, personas, troupes, symlink shared memory |
 
-### Wing/Room Namespaces
+Bot-Circus ships with **symlink-based shared memory** for troupes — bots in the same troupe point at the same `MEMORY.md` / `memory/` directory, so anything one bot writes is instantly visible to the others. No credentials required.
 
-Memory lives in **wings** (broad) and **rooms** (specific). Bot-Circus uses the same wing/room model as AI-IQ, so memories stored by one bot can be scoped-access by another.
-
-```bash
-# Bot Alice stores code-expert memories in the "code.internal" wing/room
-MEMORY_PASSPORT="<alice_credential>" memory-tool add learning \
-  "Auth service uses JWT rotation every 15 min" \
-  --wing code --room internal
-
-# Bot Bob with a valid "code:expert" passport can read them
-MEMORY_PASSPORT="<bob_credential>" memory-tool search "JWT rotation" \
-  --wing code --room internal
-```
-
-### Predefined Access Rules (from AI-IQ)
-
-| Wing / Room | Who Can Access |
-|---|---|
-| `finance.payments` | Requires `finance:expert` credential |
-| `security.secrets` | Requires `security:expert` credential |
-| `devops.production` | Requires `devops:expert` credential |
-| `code.internal` | Requires `code:expert` credential |
-| `general.public` | No credential required (default) |
+If you want long-term SQLite memory per bot, install `ai-iq` into each workspace and drive it from the bot's Claude Code session. If you want federated cross-VPS discovery and trust, pair with `circus`. Neither is auto-wired — they're complementary tools, not hard dependencies.
 
 ## Use Cases
 
 - **Personal assistant swarm**: Work bot + home bot + research bot, all in one troupe sharing your context
-- **Customer support troupe**: 5 bots covering different products, shared knowledge base, access-gated sensitive procedures
+- **Customer support troupe**: 5 bots covering different products, shared knowledge base
 - **AI character roleplay**: Each bot a different character, ringfenced per character
 - **Multi-tenant SaaS**: One bot per customer, fully ringfenced
-- **Development team**: Code review bot + docs bot + CI/CD bot sharing project context, with security-scoped secrets
+- **Development team**: Code review bot + docs bot + CI/CD bot sharing project context
 
 ## Why Bot-Circus?
 
-Existing multi-bot frameworks treat bots as dumb scripts. Bot-Circus treats each bot as a **full AI agent** with:
+Existing multi-bot frameworks treat bots as dumb scripts. Bot-Circus treats each bot as a **full Claude Code agent** with:
 
-- Persistent memory (via `ai-iq`)
-- A distinct personality (via persona files)
-- Optional shared context with teammates (troupes)
-- Verifiable trust boundaries (passport-gated access)
+- A distinct personality (via persona files — SOUL.md, IDENTITY.md, USER.md)
+- Its own workspace and session, isolated per message
+- Optional shared context with teammates via symlinked troupes
+- Plug-in friendly — drop `ai-iq` in for long-term memory, pair with `circus` for federation
 
-Nobody else ships multi-agent orchestration with **capability-based memory access control** built in.
+Nobody else ships a multi-agent Telegram runtime that treats each bot as a full Claude Code session with persona files and optional symlinked shared memory.
 
 ## Installation
 

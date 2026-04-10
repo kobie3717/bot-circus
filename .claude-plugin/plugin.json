@@ -1,7 +1,7 @@
 {
   "name": "bot-circus",
-  "version": "1.0.0",
-  "description": "Multi-bot Telegram orchestrator with per-bot persona, shared/ringfenced memory, and passport-gated access control. The access-control layer of the Claw Stack (Memory → Credential → Access).",
+  "version": "1.0.1",
+  "description": "Multi-bot Telegram orchestrator that runs unlimited Claude-powered bots on one VPS, each with its own persona and either shared (troupe) or ringfenced memory via symlinked workspaces. The runtime layer of the Claw Stack.",
   "author": {
     "name": "kobie3717",
     "url": "https://github.com/kobie3717"
@@ -16,10 +16,9 @@
     "orchestrator",
     "claude",
     "shared-memory",
-    "access-control",
-    "passport",
     "ringfence",
     "troupe",
+    "persona",
     "claw-stack"
   ],
   "skills": "skills"

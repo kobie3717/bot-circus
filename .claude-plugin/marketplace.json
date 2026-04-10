@@ -1,0 +1,22 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "bot-circus",
+  "owner": {
+    "name": "kobie3717"
+  },
+  "metadata": {
+    "description": "Bot-Circus: Multi-bot Telegram orchestrator with per-bot persona and shared/ringfenced memory. The runtime layer of the Claw Stack.",
+    "homepage": "https://github.com/kobie3717/bot-circus"
+  },
+  "plugins": [
+    {
+      "name": "bot-circus",
+      "version": "1.0.1",
+      "source": "./",
+      "description": "Multi-bot Telegram orchestrator that runs unlimited Claude-powered bots on one VPS, each with its own persona and either shared (troupe) or ringfenced memory via symlinked workspaces. Pairs with ai-iq (memory) and circus (commons) to complete the Claw Stack.",
+      "category": "multi-agent",
+      "tags": ["telegram", "multi-agent", "orchestrator", "shared-memory", "persona", "claw-stack"],
+      "keywords": ["telegram", "bot", "multi-agent", "orchestrator", "claude", "shared-memory", "ringfence", "troupe", "persona", "claw-stack"]
+    }
+  ]
+}

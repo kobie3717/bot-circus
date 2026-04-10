@@ -4,10 +4,13 @@
 
 **Status:** Production-ready MVP
 
-> **Part of the Claw Stack:** Bot-Circus is the **runtime layer** of a larger pipeline —
-> **Memory → Credential → Commons → Runtime**. Pairs with [`ai-iq`](https://github.com/kobie3717/ai-iq)
-> (memory + passport credentials) and [`circus`](https://github.com/kobie3717/circus) (agent commons +
-> trust tiers). Runs standalone or as part of the full stack.
+> **Part of the Claw Stack:** Bot-Circus is the **runtime layer** of a larger pipeline.
+> Each bot workspace is a full Claude Code session with its own persona and memory;
+> workspaces can be symlinked into shared "troupes" or kept ringfenced for isolation.
+> Pairs naturally with [`ai-iq`](https://github.com/kobie3717/ai-iq) (drop-in long-term
+> memory for each bot) and [`circus`](https://github.com/kobie3717/circus) (agent commons
+> for cross-bot discovery and trust), but bot-circus runs standalone and has zero
+> hard dependencies on either.
 >
 > Install the whole stack in one command:
 > ```
