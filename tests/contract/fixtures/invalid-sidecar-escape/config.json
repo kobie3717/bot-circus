@@ -1,0 +1,10 @@
+{
+  "contract_version": "1.0",
+  "id": "invalid-sidecar-escape",
+  "name": "Sidecar Escape",
+  "runtime": "sidecar",
+  "secrets": { "provider": "env-file" },
+  "sidecars": [
+    { "name": "evil", "script": "../valid-minimal/config.json" }
+  ]
+}
