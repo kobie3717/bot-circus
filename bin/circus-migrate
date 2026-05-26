@@ -1,0 +1,82 @@
+#!/usr/bin/env node
+import { Command } from 'commander';
+import readline from 'node:readline/promises';
+import path from 'node:path';
+import fs from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { scaffoldFromTemplate, inspectLegacy } from '../lib/migrate.js';
+import { lintWorkspaces } from '../lib/lint.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(__dirname, '..');
+
+async function prompt(q, def) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const ans = await rl.question(`${q}${def ? ` [${def}]` : ''}: `);
+  rl.close();
+  return ans.trim() || def || '';
+}
+
+const program = new Command();
+program
+  .name('circus-migrate')
+  .argument('<legacyPath>', 'path to legacy bot directory')
+  .requiredOption('--id <id>', 'performer id (target dir name)')
+  .option('--out <dir>', 'destination dir (default: performers/<id>)')
+  .option('--force', 'overwrite if destination exists')
+  .option('--yes', 'non-interactive — accept defaults')
+  .action(async (legacyPath, opts) => {
+    const dest = opts.out || path.join(ROOT, 'performers', opts.id);
+    console.log(`\n[1/6] Inspecting legacy dir: ${legacyPath}`);
+    const info = await inspectLegacy(legacyPath);
+    console.log('       pkg name:', info.pkgName);
+    console.log('       env keys:', info.envKeys.join(', ') || '(none)');
+    console.log('       entry scripts:', info.entryScripts.join(', ') || '(none)');
+    console.log('       suggested runtime:', info.suggestedRuntime);
+
+    const name = opts.yes ? opts.id : await prompt('display name', info.pkgName || opts.id);
+    const role = opts.yes ? 'bot' : await prompt('role (one-liner)', 'bot');
+    const tgUser = opts.yes ? `@${opts.id}_bot` : await prompt('telegram_username', `@${opts.id}_bot`);
+    const owner = opts.yes ? 'kobie3717' : await prompt('owner', 'kobie3717');
+
+    console.log(`\n[2/6] Scaffolding ${dest}`);
+    await scaffoldFromTemplate({
+      destDir: dest,
+      values: { id: opts.id, name, role, telegram_username: tgUser, owner },
+      force: !!opts.force
+    });
+
+    if (info.envKeys.length > 0) {
+      const move = opts.yes ? true : (await prompt(`\n[3/6] Move .env from ${legacyPath} to ${dest}? (y/N)`, 'N')).toLowerCase().startsWith('y');
+      if (move) {
+        await fs.copyFile(path.join(legacyPath, '.env'), path.join(dest, '.env'));
+        console.log('       .env copied (legacy file untouched)');
+      } else {
+        console.log('       skipped .env move');
+      }
+    }
+
+    if (info.suggestedRuntime === 'sidecar') {
+      console.log('\n[4/6] Detected sidecar pattern. You should edit config.json to set runtime="sidecar" and populate sidecars[].');
+    }
+
+    console.log('\n[5/6] Running circus-lint --performer', opts.id);
+    const summary = await lintWorkspaces({ workspaces: [dest] });
+    for (const r of summary.results) {
+      for (const rr of r.ruleResults) {
+        if (!rr.pass) {
+          for (const v of rr.violations) console.log(`       [${rr.severity}] ${rr.id}: ${v.message}`);
+        }
+      }
+    }
+    console.log(`       errors: ${summary.errorCount}, warnings: ${summary.warnCount}`);
+
+    console.log('\n[6/6] Manual TODO:');
+    console.log('       [ ] Fill SOUL.md and USER.md with real persona content');
+    console.log('       [ ] Decide runtime: keep "shared" (refactor logic into orchestrator) OR set "custom" and add CUSTOM_RUNTIME.md');
+    console.log('       [ ] Update PM2 ecosystem: cwd → ' + dest);
+    console.log('       [ ] After verification, delete legacy dir: ' + legacyPath);
+    console.log('\nLegacy directory NOT modified.');
+  });
+
+program.parseAsync().catch(err => { console.error(err.message); process.exit(2); });
