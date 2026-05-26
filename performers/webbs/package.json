@@ -1,0 +1,15 @@
+{
+  "name": "webbs",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "bot.mjs",
+  "scripts": {
+    "start": "node bot.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.36.0",
+    "better-sqlite3": "^12.9.0",
+    "dotenv": "^16.0.0",
+    "grammy": "^1.26.0"
+  }
+}
