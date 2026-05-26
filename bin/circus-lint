@@ -27,6 +27,7 @@ program
   .option('--performer <id>', 'lint one performer by id')
   .option('--format <fmt>', 'output format: text|json', 'text')
   .option('--layer <layer>', 'rule layer filter: lint|ci|runtime|all', 'all')
+  .option('--since <ref>', 'lint only performers changed since git ref')
   .action(async (opts) => {
     let workspaces = await discoverPerformers();
     if (opts.performer) {
@@ -35,6 +36,9 @@ program
         console.error(`no performer found with id "${opts.performer}"`);
         process.exit(2);
       }
+    } else if (opts.since) {
+      const { pickWorkspacesSince } = await import('../lib/lint.js');
+      workspaces = await pickWorkspacesSince(workspaces, opts.since);
     }
     const summary = await lintWorkspaces({ workspaces, layer: opts.layer });
     if (opts.format === 'json') {
