@@ -16,3 +16,6 @@ coverage/
 *~
 .idea/
 .vscode/
+performers/*/.env
+logs/contract-violations.jsonl
+logs/dispatch.jsonl
