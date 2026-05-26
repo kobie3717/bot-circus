@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
-import { scaffoldFromTemplate } from '../../lib/migrate.js';
+import { scaffoldFromTemplate, inspectLegacy } from '../../lib/migrate.js';
 import { makeTmpWorkspace, cleanupTmp, writeFiles } from './helpers.js';
 
 test('scaffoldFromTemplate copies template into dest with placeholders filled', async () => {
@@ -38,4 +38,37 @@ test('scaffoldFromTemplate refuses to overwrite without force', async () => {
     }), /exists|not empty/i);
     assert.ok(fs.existsSync(path.join(dest, 'existing.txt')));
   } finally { cleanupTmp(dest); }
+});
+
+test('inspectLegacy reads name from package.json and env keys from .env', async () => {
+  const legacy = makeTmpWorkspace((d) => {
+    writeFiles(d, {
+      'package.json': { name: 'old-bot', version: '1.0.0' },
+      '.env': 'TELEGRAM_BOT_TOKEN=xxx\nANTHROPIC_API_KEY=yyy\n',
+      'bot.mjs': 'console.log("old runtime");'
+    });
+  });
+  try {
+    const info = await inspectLegacy(legacy);
+    assert.strictEqual(info.pkgName, 'old-bot');
+    assert.deepStrictEqual(info.envKeys, ['TELEGRAM_BOT_TOKEN', 'ANTHROPIC_API_KEY']);
+    assert.deepStrictEqual(info.entryScripts, ['bot.mjs']);
+    assert.strictEqual(info.suggestedRuntime, 'shared');
+  } finally { cleanupTmp(legacy); }
+});
+
+test('inspectLegacy detects sidecar pattern when multiple top-level scripts', async () => {
+  const legacy = makeTmpWorkspace((d) => {
+    writeFiles(d, {
+      'package.json': { name: 'multi', version: '1.0.0' },
+      'bot.mjs': '',
+      'email.mjs': '',
+      'whatsapp.mjs': ''
+    });
+  });
+  try {
+    const info = await inspectLegacy(legacy);
+    assert.strictEqual(info.suggestedRuntime, 'sidecar');
+    assert.deepStrictEqual(info.entryScripts.sort(), ['bot.mjs','email.mjs','whatsapp.mjs']);
+  } finally { cleanupTmp(legacy); }
 });
