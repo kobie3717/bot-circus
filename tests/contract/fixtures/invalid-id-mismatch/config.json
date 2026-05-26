@@ -1,0 +1,7 @@
+{
+  "contract_version": "1.0",
+  "id": "not-the-dirname",
+  "name": "Mismatch",
+  "runtime": "shared",
+  "secrets": { "provider": "env-file" }
+}
