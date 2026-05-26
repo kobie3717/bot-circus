@@ -7,6 +7,7 @@ import net from 'net';
 import { fileURLToPath } from 'url';
 import { Orchestrator } from '../lib/orchestrator.js';
 import { MemoryManager } from '../lib/memory-manager.js';
+import { dispatch } from '../lib/dispatch.js';
 import pino from 'pino';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -163,6 +164,10 @@ program
             case 'start':
               await orchestrator.start(args.botId);
               response = { success: true };
+              break;
+            case 'reset-budget':
+              orchestrator.resetBudget(args.botId || null);
+              response = { success: true, botId: args.botId || 'global' };
               break;
             default:
               response = { error: 'Unknown command' };
@@ -390,6 +395,25 @@ program
     });
   });
 
+// Reset budget (rate limiter + message count)
+program
+  .command('reset-budget [bot-id]')
+  .description('Reset rate limit window and message count for a bot (or global limiter if no bot-id)')
+  .action(async (botId) => {
+    try {
+      const response = await sendCommand('reset-budget', { botId: botId || null });
+      if (response.error) {
+        console.error('Error:', response.error);
+        process.exit(1);
+      }
+      const target = response.botId === 'global' ? 'global rate limiter' : `bot: ${response.botId}`;
+      console.log(`✓ Budget reset for ${target}`);
+    } catch (error) {
+      console.error('Error:', error.message);
+      process.exit(1);
+    }
+  });
+
 // Add troupe
 program
   .command('add-troupe <name>')
@@ -548,6 +572,36 @@ program
       console.log(`  Workers: ${response.workerPool.activeWorkers}/${response.workerPool.maxWorkers}`);
     } catch (error) {
       console.error('❌ Unhealthy:', error.message);
+      process.exit(1);
+    }
+  });
+
+// Dispatch ephemeral worker
+program
+  .command('dispatch <bot-id> <task>')
+  .description('Dispatch ephemeral worker task to a bot performer')
+  .option('--silent', 'Only show final output, no streaming')
+  .action(async (botId, task, options) => {
+    try {
+      console.log(`Dispatching task to ${botId}...`);
+      console.log('');
+
+      const result = await dispatch(botId, task, {
+        performersDir: path.join(ROOT_DIR, 'performers'),
+        onStream: options.silent ? null : (text) => {
+          process.stdout.write(text);
+        },
+        logger
+      });
+
+      if (options.silent) {
+        console.log(result.output);
+      }
+
+      console.log('');
+      console.log(`✓ Task completed. Summary appended to MEMORY.md`);
+    } catch (error) {
+      console.error('Error:', error.message);
       process.exit(1);
     }
   });
