@@ -1,0 +1,7 @@
+{
+  "contract_version": "1.0",
+  "id": "invalid-identity-no-frontmatter",
+  "name": "Bad FM",
+  "runtime": "shared",
+  "secrets": { "provider": "env-file" }
+}

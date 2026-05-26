@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# bot-circus contract pre-commit hook
+set -e
+REPO=$(git rev-parse --show-toplevel)
+cd "$REPO"
+
+# Only run if any staged file is under performers/ or templates/ or lib/contract/
+CHANGED=$(git diff --cached --name-only)
+if echo "$CHANGED" | grep -qE '^(performers/|templates/|lib/contract/|lib/lint\.js|lib/validator\.js|lib/migrate\.js)'; then
+  echo "[circus] running contract lint on staged changes..."
+
+  # Extract workspace names from staged files
+  WORKSPACES=$(echo "$CHANGED" | grep -E '^performers/' | cut -d/ -f2 | sort -u | tr '\n' ' ')
+
+  if [ -n "$WORKSPACES" ]; then
+    # Lint specific workspaces
+    for ws in $WORKSPACES; do
+      echo "[circus] linting workspace: $ws"
+      ./bin/circus-lint --performer "$ws"
+    done
+  else
+    # If no performers/ files but templates/ or lib/ changed, lint all
+    echo "[circus] non-workspace files changed, linting all workspaces"
+    ./bin/circus-lint
+  fi
+fi

@@ -1,0 +1,7 @@
+{
+  "contract_version": "1.0",
+  "id": "invalid-custom-no-md",
+  "name": "Bad Custom",
+  "runtime": "custom",
+  "secrets": { "provider": "env-file" }
+}

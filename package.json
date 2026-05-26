@@ -4,15 +4,23 @@
   "description": "Multi-bot Telegram orchestrator powered by Claude Code CLI",
   "type": "module",
   "bin": {
-    "circus": "./bin/circus.js"
+    "circus": "./bin/circus.js",
+    "circus-lint": "./bin/circus-lint",
+    "circus-migrate": "./bin/circus-migrate"
   },
   "main": "./lib/orchestrator.js",
   "scripts": {
     "start": "node lib/orchestrator.js",
-    "dev": "node --watch lib/orchestrator.js"
+    "dev": "node --watch lib/orchestrator.js",
+    "test": "node --test --test-reporter=spec 'tests/contract/**/*.test.js' 'tests/integration/**/*.test.js'",
+    "test:unit": "node --test --test-reporter=spec 'tests/contract/**/*.test.js'",
+    "test:integration": "node --test --test-reporter=spec 'tests/integration/**/*.test.js'",
+    "lint:contract": "node bin/circus-lint"
   },
   "dependencies": {
+    "ajv": "^8.20.0",
     "commander": "^12.0.0",
+    "gray-matter": "^4.0.3",
     "node-telegram-bot-api": "^0.66.0",
     "pino": "^9.0.0",
     "pino-pretty": "^11.0.0"

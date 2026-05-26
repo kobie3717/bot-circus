@@ -1,0 +1,7 @@
+{
+  "contract_version": "1.0",
+  "id": "valid-custom",
+  "name": "Valid Custom",
+  "runtime": "custom",
+  "secrets": { "provider": "env-file" }
+}

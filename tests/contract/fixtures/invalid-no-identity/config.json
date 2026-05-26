@@ -1,0 +1,7 @@
+{
+  "contract_version": "1.0",
+  "id": "invalid-no-identity",
+  "name": "No Identity",
+  "runtime": "shared",
+  "secrets": { "provider": "env-file" }
+}

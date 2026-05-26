@@ -1,0 +1,11 @@
+{
+  "contract_version": "1.0",
+  "id": "valid-sidecar",
+  "name": "Valid Sidecar",
+  "runtime": "sidecar",
+  "secrets": { "provider": "env-file" },
+  "sidecars": [
+    { "name": "email", "script": "email.mjs" },
+    { "name": "whatsapp", "script": "whatsapp.mjs" }
+  ]
+}

@@ -1,0 +1,79 @@
+#!/usr/bin/env node
+import { Command } from 'commander';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { lintWorkspaces } from '../lib/lint.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(__dirname, '..');
+const PERFORMERS_DIR = path.join(ROOT, 'performers');
+
+async function discoverPerformers() {
+  try {
+    const entries = await fs.readdir(PERFORMERS_DIR, { withFileTypes: true });
+    return entries
+      .filter(e => e.isDirectory() && !e.name.startsWith('.'))
+      .map(e => path.join(PERFORMERS_DIR, e.name));
+  } catch {
+    return [];
+  }
+}
+
+const program = new Command();
+program
+  .name('circus-lint')
+  .description('Validate bot-circus performer workspaces against the contract')
+  .option('--performer <id>', 'lint one performer by id')
+  .option('--format <fmt>', 'output format: text|json', 'text')
+  .option('--layer <layer>', 'rule layer filter: lint|ci|runtime|all', 'all')
+  .option('--since <ref>', 'lint only performers changed since git ref')
+  .option('--status', 'show current quarantine state from .state/quarantine.json')
+  .action(async (opts) => {
+    if (opts.status) {
+      const { readQuarantineState } = await import('../lib/validator.js');
+      const state = readQuarantineState(path.join(ROOT, '.state/quarantine.json'));
+      if (state.size === 0) { console.log('No performers quarantined.'); return; }
+      for (const [id, info] of state) {
+        console.log(`QUARANTINED  ${id}`);
+        for (const v of info.errors) console.log(`  ${v.rule || ''}: ${v.message || JSON.stringify(v)}`);
+      }
+      return;
+    }
+    let workspaces = await discoverPerformers();
+    if (opts.performer) {
+      workspaces = workspaces.filter(w => path.basename(w) === opts.performer);
+      if (workspaces.length === 0) {
+        console.error(`no performer found with id "${opts.performer}"`);
+        process.exit(2);
+      }
+    } else if (opts.since) {
+      const { pickWorkspacesSince } = await import('../lib/lint.js');
+      workspaces = await pickWorkspacesSince(workspaces, opts.since);
+    }
+    const summary = await lintWorkspaces({ workspaces, layer: opts.layer });
+    if (opts.format === 'json') {
+      console.log(JSON.stringify(summary, null, 2));
+    } else {
+      printText(summary);
+    }
+    process.exit(summary.errorCount > 0 ? 1 : 0);
+  });
+
+function printText(summary) {
+  for (const r of summary.results) {
+    const id = path.basename(r.workspace);
+    const errs = r.ruleResults.filter(x => !x.pass && x.severity === 'error');
+    const warns = r.ruleResults.filter(x => !x.pass && x.severity === 'warn');
+    const status = errs.length === 0 ? 'OK' : 'FAIL';
+    console.log(`${status}  ${id}  (errors: ${errs.length}, warnings: ${warns.length})`);
+    for (const rr of [...errs, ...warns]) {
+      for (const v of rr.violations) {
+        console.log(`  [${rr.severity}] ${rr.id}: ${v.message}`);
+      }
+    }
+  }
+  console.log(`\nTotal: ${summary.errorCount} errors, ${summary.warnCount} warnings.`);
+}
+
+program.parseAsync().catch(err => { console.error(err); process.exit(2); });
