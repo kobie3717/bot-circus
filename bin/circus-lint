@@ -28,7 +28,18 @@ program
   .option('--format <fmt>', 'output format: text|json', 'text')
   .option('--layer <layer>', 'rule layer filter: lint|ci|runtime|all', 'all')
   .option('--since <ref>', 'lint only performers changed since git ref')
+  .option('--status', 'show current quarantine state from .state/quarantine.json')
   .action(async (opts) => {
+    if (opts.status) {
+      const { readQuarantineState } = await import('../lib/validator.js');
+      const state = readQuarantineState(path.join(ROOT, '.state/quarantine.json'));
+      if (state.size === 0) { console.log('No performers quarantined.'); return; }
+      for (const [id, info] of state) {
+        console.log(`QUARANTINED  ${id}`);
+        for (const v of info.errors) console.log(`  ${v.rule || ''}: ${v.message || JSON.stringify(v)}`);
+      }
+      return;
+    }
     let workspaces = await discoverPerformers();
     if (opts.performer) {
       workspaces = workspaces.filter(w => path.basename(w) === opts.performer);
