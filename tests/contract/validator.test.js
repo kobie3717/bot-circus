@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { validateAtBoot } from '../../lib/validator.js';
-import { fixturePath } from './helpers.js';
+import fs from 'node:fs';
+import { validateAtBoot, writeQuarantineState, readQuarantineState } from '../../lib/validator.js';
+import { fixturePath, makeTmpWorkspace, cleanupTmp } from './helpers.js';
 
 test('validateAtBoot returns pass+fail Maps', async () => {
   const r = await validateAtBoot([
@@ -24,4 +25,17 @@ test('validateAtBoot only runs runtime-layer rules (R01–R06)', async () => {
   for (const id of ['R07','R08','R09','R10','R11','R12']) {
     assert.ok(!ruleIds.includes(id), `${id} should not run at runtime`);
   }
+});
+
+test('writeQuarantineState writes JSON; readQuarantineState reads it back', () => {
+  const dir = makeTmpWorkspace(() => {});
+  try {
+    const statePath = `${dir}/quarantine.json`;
+    writeQuarantineState(statePath, new Map([
+      ['friday', { errors: [{ rule: 'R02', message: 'missing IDENTITY.md' }] }]
+    ]));
+    const read = readQuarantineState(statePath);
+    assert.strictEqual(read.has('friday'), true);
+    assert.strictEqual(read.get('friday').errors[0].rule, 'R02');
+  } finally { cleanupTmp(dir); }
 });
