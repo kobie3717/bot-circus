@@ -1,0 +1,11 @@
+{
+  "contract_version": "1.0",
+  "id": "valid-minimal",
+  "name": "Valid Minimal",
+  "telegram_username": "@valid_minimal_bot",
+  "runtime": "shared",
+  "secrets": { "provider": "env-file", "path": ".env" },
+  "troupes": [],
+  "sidecars": [],
+  "owner": "test"
+}
