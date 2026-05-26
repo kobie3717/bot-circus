@@ -1,6 +1,12 @@
 {
+  "contract_version": "1.0",
   "id": "octo",
   "name": "Octo",
+  "runtime": "shared",
+  "secrets": {
+    "provider": "env-file",
+    "path": ".env"
+  },
   "troupe": null,
   "persona_file": "SOUL.md",
   "rate_limits": {

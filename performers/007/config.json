@@ -1,6 +1,12 @@
 {
+  "contract_version": "1.0",
   "id": "007",
   "name": "007",
+  "runtime": "shared",
+  "secrets": {
+    "provider": "env-file",
+    "path": ".env"
+  },
   "troupe": null,
   "persona_file": "SOUL.md",
   "rate_limits": {
