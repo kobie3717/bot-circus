@@ -1,12 +1,16 @@
 {
   "contract_version": "1.0",
   "id": "webbs",
-  "name": "webbs",
-  "runtime": "shared",
+  "name": "Webbs",
+  "telegram_username": "@webbs_bot",
+  "runtime": "custom",
   "secrets": {
     "provider": "env-file",
     "path": ".env"
   },
+  "troupes": [],
+  "sidecars": [],
+  "owner": "kobie3717",
   "troupe": null,
   "persona_file": "SOUL.md",
   "rate_limits": {
