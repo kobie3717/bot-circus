@@ -91,3 +91,20 @@ test('worker resolve fires onResult and removes record', async () => {
   assert.strictEqual(resultRecord.id, taskId);
   assert.strictEqual(resultValue, 'all done');
 });
+
+test('worker reject fires onError and removes record', async () => {
+  const factory = mockWorkerFactory();
+  let errRecord = null;
+  let errValue = null;
+  const pool = new TaskPool({
+    maxConcurrent: 5,
+    workerFactory: factory,
+    onError: (rec, err) => { errRecord = rec; errValue = err; }
+  });
+  const { taskId } = pool.spawn('broken thing', {}, 1);
+  factory.created[0].controls.reject(new Error('claude crashed'));
+  await new Promise(r => setImmediate(r));
+  assert.strictEqual(pool.runningCount(), 0);
+  assert.strictEqual(errRecord.id, taskId);
+  assert.match(errValue.message, /claude crashed/);
+});
