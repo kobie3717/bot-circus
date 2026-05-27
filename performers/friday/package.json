@@ -5,7 +5,8 @@
   "type": "module",
   "main": "bot.mjs",
   "scripts": {
-    "start": "node bot.mjs"
+    "start": "node bot.mjs",
+    "test": "node --test --test-reporter=spec tests/*.test.js"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
