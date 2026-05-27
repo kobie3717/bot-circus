@@ -1,0 +1,27 @@
+{
+  "name": "007-bot",
+  "version": "1.0.0",
+  "description": "007 - Intelligence & Research Telegram Agent",
+  "type": "module",
+  "main": "bot.mjs",
+  "scripts": {
+    "start": "node bot.mjs",
+    "check": "node --check bot.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "intelligence",
+    "research",
+    "claude"
+  ],
+  "author": "Kobus",
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^12.9.0",
+    "dotenv": "^16.4.5",
+    "grammy": "^1.42.0",
+    "node-cron": "^4.2.1"
+  }
+}
