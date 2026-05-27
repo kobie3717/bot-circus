@@ -5,7 +5,8 @@ import { spawn } from 'child_process';
 import { config } from 'dotenv';
 import { readFile, readdir, writeFile } from 'fs/promises';
 import { existsSync } from 'fs';
-import { join } from 'path';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { getOrCreateSession, clearSession, getSessionInfo, getStats } from './sessions.mjs';
 import { transcribe } from './voice.mjs';
 import { createConfirmKeyboard, addPendingAction, getPendingAction, removePendingAction, generateActionId } from './confirm.mjs';
@@ -15,6 +16,10 @@ import { fullDashboard, serverDashboard } from './dashboards.mjs';
 import { executeAction, listActions, getAction } from './actions.mjs';
 import { buildMemoryContext, autoStoreConversation, storeMemory, searchMemory } from './memory-bridge.mjs';
 import { circusRegister, buildPreferenceContext, detectPreferenceSignals, publishPreference, getRelevantSharedKnowledge, writeSharedKnowledge, shouldShareKnowledge, writeCorrection, detectCorrectionSignal, registerTaskHandler, startTaskInboxPoller, submitTask, getAgentId } from './circus-bridge.mjs';
+
+// ESM __dirname polyfill
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 // Load environment variables (override to prevent inherited env vars from clobbering .env)
 config({ override: true });
@@ -31,8 +36,8 @@ const internalHeaders = CLAW_API_KEY
   ? { 'Content-Type': 'application/json', 'X-API-Key': CLAW_API_KEY }
   : { 'Content-Type': 'application/json' };
 
-// OpenClaw workspace paths
-const WORKSPACE = process.env.WORKSPACE || '/root/.openclaw/workspace';
+// WA-Drone workspace paths (local to this performer)
+const WORKSPACE = __dirname;
 const MEMORY_DIR = join(WORKSPACE, 'memory');
 
 if (!BOT_TOKEN || !ALLOWED_USER_ID || !CLAUDE_CLI_PATH) {
@@ -134,7 +139,7 @@ Working directory: ${CLAUDE_WORKING_DIR}
 You have full access to the VPS via Claude Code tools (Bash, Read, Edit, Write, Grep, Glob).
 You can check servers, read logs, edit code, run commands — everything you can do.
 
-**MEMORY MANAGEMENT**: You can update your memory by editing files in /root/.openclaw/workspace/:
+**MEMORY MANAGEMENT**: You can update your memory by editing files in ${WORKSPACE}:
 - MEMORY.md - Your hot memory index
 - memory/*.md - Topic-specific memory files
 Use the Write/Edit tools to update these files when you learn something important.
@@ -224,10 +229,10 @@ async function getSystemPrompt(userMessage = '') {
 getSystemPrompt();
 
 // Register with Circus + start task inbox poller (non-fatal if Circus is down)
-circusRegister('Friday', 'friday', ['memory', 'preference', 'inbox', 'messaging'])
+circusRegister('WA-Drone', 'wa-drone', ['memory', 'preference', 'inbox', 'messaging'])
   .then(token => {
     if (token) {
-      // Register Friday's task handlers
+      // Register WA-Drone's task handlers
       registerTaskHandler('notify', async (payload) => {
         // Deliver a notification to Kobus via Telegram
         const msg = payload.message || payload.text || JSON.stringify(payload);
@@ -366,9 +371,9 @@ bot.command('memory', async (ctx) => {
   const stopTyping = startTypingIndicator(ctx);
 
   try {
-    // Search OpenClaw memory files (safe: no shell interpolation)
+    // Search WA-Drone workspace memory files (safe: no shell interpolation)
     const { spawnSync } = await import('child_process');
-    const grepResult = spawnSync('grep', ['-ri', query, '/root/.openclaw/workspace/', '--include=*.md', '-n'], {
+    const grepResult = spawnSync('grep', ['-ri', query, WORKSPACE, '--include=*.md', '-n'], {
       encoding: 'utf-8',
       timeout: 10000,
       maxBuffer: 1024 * 1024,
@@ -857,7 +862,7 @@ async function handleTextMessage(ctx) {
     writeCorrection(
       `User correction: ${correctionSignal.reason}`,
       correctionSignal.reason,
-      'Friday'
+      'WA-Drone'
     ).catch(e => console.error('[Circus] Correction write failed:', e.message));
   }
 
@@ -918,7 +923,7 @@ async function handleTextMessage(ctx) {
     try {
       const { shouldShare, category, domain, confidence, content } = shouldShareKnowledge(userMessage, response);
       if (shouldShare) {
-        const written = await writeSharedKnowledge(content, category, confidence, domain, 'Friday');
+        const written = await writeSharedKnowledge(content, category, confidence, domain, 'WA-Drone');
         if (written) console.log(`[Circus] Shared ${category} knowledge to Circus (domain: ${domain})`);
       }
     } catch (circusErr) {
