@@ -108,3 +108,17 @@ test('worker reject fires onError and removes record', async () => {
   assert.strictEqual(errRecord.id, taskId);
   assert.match(errValue.message, /claude crashed/);
 });
+
+test('isFull and runningCount reflect spawn/cancel cycles', async () => {
+  const pool = new TaskPool({ maxConcurrent: 2, workerFactory: mockWorkerFactory(), onError: () => {} });
+  assert.strictEqual(pool.isFull(), false);
+  assert.strictEqual(pool.runningCount(), 0);
+  const a = pool.spawn('a', {}, 1);
+  pool.spawn('b', {}, 2);
+  assert.strictEqual(pool.runningCount(), 2);
+  assert.strictEqual(pool.isFull(), true);
+  pool.cancel(a.taskId);
+  await new Promise(r => setImmediate(r));
+  assert.strictEqual(pool.runningCount(), 1);
+  assert.strictEqual(pool.isFull(), false);
+});
