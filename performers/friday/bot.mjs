@@ -53,6 +53,8 @@ console.log(`Timeout: ${CLAUDE_TIMEOUT / 1000}s`);
 
 const bot = new Bot(BOT_TOKEN);
 
+import { TaskPool } from './task-pool.mjs';
+
 // Record bot startup time for stale message filter
 const BOT_START_TIME = Date.now();
 
@@ -68,6 +70,98 @@ const activeTasks = new Map();
 // (handles long messages split across multiple Telegram bubbles)
 const MESSAGE_BUFFER_DELAY_MS = 2500; // wait 2.5s for more parts
 const messageBuffers = new Map(); // userId -> { messages: string[], timer, ctx }
+
+// --- TaskPool Integration (T9) ---
+
+// Simplified Claude worker factory for TaskPool.
+// T9: collects full stdout (no streaming yet). T12+ will add full session/memory/streaming.
+function spawnClaudeWorker(prompt, ctx) {
+  // For T9: use simple stateless Claude call (no session).
+  // Full session management + memory will be restored in T12 when we refactor handleTextMessage.
+  const args = [
+    '--print',
+    '--output-format', 'stream-json',
+    '--verbose',
+    '--model', 'sonnet',
+  ];
+
+  const handle = spawn(CLAUDE_CLI_PATH, args, {
+    cwd: CLAUDE_WORKING_DIR,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  handle.stdin.write(prompt + '\n');
+  handle.stdin.end();
+
+  let stdout = '';
+  let stderr = '';
+  let lineBuffer = '';
+
+  const promise = new Promise((resolve, reject) => {
+    handle.stdout.on('data', (chunk) => {
+      lineBuffer += chunk.toString();
+      const lines = lineBuffer.split('\n');
+      lineBuffer = lines.pop();
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const event = JSON.parse(line);
+          // Extract text from assistant messages
+          if (event.type === 'assistant' && event.message?.content) {
+            for (const block of event.message.content) {
+              if (block.type === 'text' && block.text) {
+                stdout += block.text;
+              }
+            }
+          }
+          // Also capture from result event
+          if (event.type === 'result' && event.result && !stdout.trim()) {
+            stdout = event.result;
+          }
+        } catch {}
+      }
+    });
+
+    handle.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    handle.on('error', (err) => {
+      reject(err);
+    });
+
+    handle.on('close', (code) => {
+      if (code === 0 || code === null) {
+        resolve(stdout || '💁‍♀️ _no response_');
+      } else {
+        const isCancelled = /killed|terminated/i.test(stderr);
+        reject(new Error(isCancelled ? 'Task cancelled' : `Claude CLI exited with code ${code}: ${stderr.slice(0, 200)}`));
+      }
+    });
+  });
+
+  return { handle, promise };
+}
+
+// TaskPool instance
+const pool = new TaskPool({
+  maxConcurrent: 5,
+  workerFactory: spawnClaudeWorker,
+  logger: console,
+  onResult: (task, result) => {
+    bot.api.sendMessage(task.ctx.chat.id, `#${task.id} ✓\n\n${result.slice(0, 4000)}`, {
+      reply_parameters: { message_id: task.replyToMessageId }
+    }).catch(err => console.error('[TaskPool reply failed]', err.message));
+  },
+  onError: (task, err) => {
+    const isCancel = /cancelled|SIGTERM|killed/i.test(err.message || '');
+    const msg = isCancel ? `🛑 #${task.id} cancelled` : `❌ #${task.id} failed: ${err.message}`;
+    bot.api.sendMessage(task.ctx.chat.id, msg, {
+      reply_parameters: { message_id: task.replyToMessageId }
+    }).catch(e => console.error('[TaskPool error reply failed]', e.message));
+  }
+});
 
 // --- Helpers ---
 
@@ -913,127 +1007,53 @@ bot.on('message:text', async (ctx, next) => {
   }
 });
 
+// T9: Simplified message:text handler — uses TaskPool.
+// T10 adds /status, T11 adds /cancel, T12 adds full session/memory/streaming restoration.
 bot.on('message:text', async (ctx) => {
-  const userMessage = ctx.message.text;
-  console.log(`[friday-debug] msg from=${ctx.from?.id} chat=${ctx.chat?.id} type=${ctx.chat?.type} text="${userMessage?.substring(0,50)}"`);
-  if (userMessage.startsWith('/')) return;
-  if (!isAuthorized(ctx)) { console.log(`[friday-debug] NOT AUTHORIZED: from=${ctx.from?.id}`); return; }
-  if (isDuplicate(ctx.chat.id, ctx.message.message_id)) { console.log(`[friday-debug] DUPLICATE`); return; }
+  const text = ctx.message?.text || '';
 
-  // In groups: only respond when explicitly @mentioned
+  // Skip commands (handled elsewhere)
+  if (text.startsWith('/')) return;
+
+  // Authorization check
+  if (!isAuthorized(ctx)) {
+    console.log(`[friday-debug] NOT AUTHORIZED: from=${ctx.from?.id}`);
+    return;
+  }
+
+  // Duplicate check
+  if (isDuplicate(ctx.chat.id, ctx.message.message_id)) {
+    console.log(`[friday-debug] DUPLICATE`);
+    return;
+  }
+
+  // In groups: only respond when @mentioned
   const chatType = ctx.chat?.type;
   if (chatType === 'group' || chatType === 'supergroup') {
     const botUsername = bot.botInfo?.username;
     const mentioned = ctx.message.entities?.some(e => e.type === 'mention') &&
-      botUsername && userMessage.includes(`@${botUsername}`);
+      botUsername && text.includes(`@${botUsername}`);
     if (!mentioned) return;
   }
 
-  // Drop stale messages from before bot startup (Telegram queues them on restart)
+  // Drop stale messages from before bot startup
   if (ctx.message.date * 1000 < BOT_START_TIME - 30000) {
-    console.log(`[stale-filter] Dropped old message ${ctx.message.message_id} (${Math.round((BOT_START_TIME - ctx.message.date * 1000)/1000)}s before startup)`);
+    console.log(`[stale-filter] Dropped old message ${ctx.message.message_id}`);
     return;
   }
 
-  const userId = ctx.from.id;
-
-  // Check for stop/cancel keywords (whole message match, case-insensitive)
-  const stopKeywords = ['stop', 'cancel', 'ignore that', 'wait'];
-  const normalizedMessage = userMessage.trim().toLowerCase();
-  if (stopKeywords.includes(normalizedMessage)) {
-    const entry = activeTasks.get(userId);
-    if (!entry) {
-      await ctx.reply('🛑 No active task to stop.');
-      return;
-    }
-    // Kill process
-    try {
-      entry.process.kill('SIGTERM');
-    } catch (e) {
-      console.error('Failed to kill process:', e.message);
-    }
-    // Clear queue and remove entry
-    activeTasks.delete(userId);
-    await ctx.reply('🛑 Stopped.');
-    return;
+  // Pool capacity check
+  if (pool.isFull()) {
+    return ctx.reply(`⚠️ Bot at capacity (${pool.runningCount()}/5). Try again in a moment.`);
   }
 
-  // Natural language job dispatch: "friday: fix the circus tests"
-  if (/^friday[,:]\s+/i.test(userMessage)) {
-    const description = userMessage.replace(/^friday[,:]\s+/i, '');
-    try {
-      const { enqueueJob } = await import('/root/jobs/queue.mjs');
-      const jobId = enqueueJob({
-        title: description.slice(0, 60),
-        description,
-        submittedBy: 'friday',
-        notifyChatId: String(ctx.chat.id)
-      });
-      await ctx.reply(`🤖 Job queued: ${jobId}\n\n"${description.slice(0, 80)}"\n\nI'll notify you when it's done.`);
-      return;
-    } catch (err) {
-      await ctx.reply(`Job queue error: ${err.message}`);
-      return;
-    }
-  }
-
-  // Message buffering — accumulate rapid consecutive messages into one
-  const existing = messageBuffers.get(userId);
-  if (existing) {
-    // More parts arriving — reset timer, append text
-    clearTimeout(existing.timer);
-    existing.messages.push(userMessage);
-    existing.ctx = ctx; // use latest ctx for reply
-    existing.timer = setTimeout(() => {
-      messageBuffers.delete(userId);
-      const combined = existing.messages.join('\n\n');
-      // Inject combined text into ctx for handleTextMessage
-      ctx.message.text = combined;
-      dispatchMessage(ctx);
-    }, MESSAGE_BUFFER_DELAY_MS);
-    return; // don't process yet
-  }
-
-  // Start new buffer window
-  const bufferEntry = {
-    messages: [userMessage],
-    ctx,
-    timer: setTimeout(() => {
-      messageBuffers.delete(userId);
-      const combined = bufferEntry.messages.join('\n\n');
-      ctx.message.text = combined;
-      dispatchMessage(ctx);
-    }, MESSAGE_BUFFER_DELAY_MS),
-  };
-  messageBuffers.set(userId, bufferEntry);
-  return; // wait for buffer to flush
+  // Spawn task
+  const { taskId } = pool.spawn(text, ctx, ctx.message.message_id);
+  await ctx.reply(
+    `🌀 #${taskId} spawned: "${text.slice(0, 60)}${text.length > 60 ? '…' : ''}"`,
+    { reply_parameters: { message_id: ctx.message.message_id } }
+  );
 });
-
-// Dispatch after buffer flush — handles busy check and processing
-function dispatchMessage(ctx) {
-  const userId = ctx.from.id;
-  const userMessage = ctx.message.text;
-
-  // Check if bot is busy processing for this user
-  const entry = activeTasks.get(userId);
-  if (entry) {
-    // Add to queue
-    entry.pendingQueue.push({ ctx, message: userMessage });
-    ctx.reply(
-      '⏳ Busy — queued your message. I\'ll get to it next.',
-      {
-        reply_markup: {
-          inline_keyboard: [[
-            { text: '⚡ Use this instead (interrupt)', callback_data: `interrupt:${userId}` }
-          ]]
-        }
-      }
-    ).catch(console.error);
-    return;
-  }
-
-  handleTextMessage(ctx).catch(console.error);
-}
 
 // Streaming response helper - edits placeholder message as text accumulates
 async function streamReplyToTelegram(ctx, claudeProcess, timeoutMs) {
