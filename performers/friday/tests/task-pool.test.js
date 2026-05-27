@@ -74,3 +74,20 @@ test('status returns running tasks with elapsed ms', async () => {
   assert.ok(s[0].elapsedMs >= 20, `expected >=20, got ${s[0].elapsedMs}`);
   assert.ok(s[1].elapsedMs < s[0].elapsedMs);
 });
+
+test('worker resolve fires onResult and removes record', async () => {
+  const factory = mockWorkerFactory();
+  let resultRecord = null;
+  let resultValue = null;
+  const pool = new TaskPool({
+    maxConcurrent: 5,
+    workerFactory: factory,
+    onResult: (rec, val) => { resultRecord = rec; resultValue = val; }
+  });
+  const { taskId } = pool.spawn('do thing', {}, 1);
+  factory.created[0].controls.resolve('all done');
+  await new Promise(r => setImmediate(r));
+  assert.strictEqual(pool.runningCount(), 0);
+  assert.strictEqual(resultRecord.id, taskId);
+  assert.strictEqual(resultValue, 'all done');
+});
