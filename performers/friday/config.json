@@ -2,12 +2,15 @@
   "contract_version": "1.0",
   "id": "friday",
   "name": "Friday",
-  "runtime": "shared",
+  "telegram_username": "@friday_assistant_bot",
+  "runtime": "custom",
   "secrets": {
     "provider": "env-file",
     "path": ".env"
   },
-  "troupe": null,
+  "troupes": [],
+  "sidecars": [],
+  "owner": "kobie3717",
   "persona_file": "SOUL.md",
   "rate_limits": {
     "messages_per_minute": 20,

@@ -1,0 +1,22 @@
+{
+  "name": "friday-bot",
+  "version": "1.0.0",
+  "description": "Lightweight Telegram bot for Claude Code CLI",
+  "type": "module",
+  "main": "bot.mjs",
+  "scripts": {
+    "start": "node bot.mjs"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^7.0.0-rc.9",
+    "better-sqlite3": "^12.8.0",
+    "dotenv": "^16.4.5",
+    "grammy": "^1.41.0",
+    "html-to-text": "^9.0.5",
+    "imapflow": "^1.2.16",
+    "nodemailer": "^8.0.3",
+    "pg": "^8.20.0",
+    "pino": "^10.3.1",
+    "qrcode": "^1.5.4"
+  }
+}
