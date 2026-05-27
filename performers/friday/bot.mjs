@@ -144,6 +144,19 @@ function spawnClaudeWorker(prompt, ctx) {
   return { handle, promise };
 }
 
+// T13: Queue waiting list (NEW queue system, not legacy activeTasks.pendingQueue)
+const queueWaiting = []; // Array<{ ctx, text }>
+
+function tryDrainQueue() {
+  while (queueWaiting.length > 0 && !pool.isFull()) {
+    const next = queueWaiting.shift();
+    const { taskId } = pool.spawn(next.text, next.ctx, next.ctx.message.message_id);
+    bot.api.sendMessage(next.ctx.chat.id, `🌀 #${taskId} (from queue) spawned: "${next.text.slice(0, 60)}${next.text.length > 60 ? '…' : ''}"`, {
+      reply_parameters: { message_id: next.ctx.message.message_id }
+    }).catch(err => console.error('[drain reply failed]', err.message));
+  }
+}
+
 // TaskPool instance
 const pool = new TaskPool({
   maxConcurrent: 5,
@@ -153,6 +166,7 @@ const pool = new TaskPool({
     bot.api.sendMessage(task.ctx.chat.id, `#${task.id} ✓\n\n${result.slice(0, 4000)}`, {
       reply_parameters: { message_id: task.replyToMessageId }
     }).catch(err => console.error('[TaskPool reply failed]', err.message));
+    tryDrainQueue(); // T13: Drain queue on task completion
   },
   onError: (task, err) => {
     const isCancel = /cancelled|SIGTERM|killed/i.test(err.message || '');
@@ -160,6 +174,7 @@ const pool = new TaskPool({
     bot.api.sendMessage(task.ctx.chat.id, msg, {
       reply_parameters: { message_id: task.replyToMessageId }
     }).catch(e => console.error('[TaskPool error reply failed]', e.message));
+    tryDrainQueue(); // T13: Drain queue on task error/cancellation
   }
 });
 
@@ -818,7 +833,7 @@ bot.callbackQuery(/^edit:(.+)$/, async (ctx) => {
   await ctx.answerCallbackQuery();
 });
 
-// T12: Queue choice
+// T12+T13: Queue choice (now uses queueWaiting array)
 bot.callbackQuery(/^q:(\d+)$/, async (ctx) => {
   const messageId = parseInt(ctx.match[1], 10);
   const entry = pendingPrompts.get(messageId);
@@ -827,19 +842,12 @@ bot.callbackQuery(/^q:(\d+)$/, async (ctx) => {
     return;
   }
   pendingPrompts.delete(messageId);
-  await ctx.editMessageText('⏳ Queued. Will start when current task finishes.');
-  await ctx.answerCallbackQuery();
 
-  // Queue via old activeTasks mechanism (handleTextMessage drains it)
-  const userId = entry.ctx.from.id;
-  const existing = activeTasks.get(userId);
-  if (existing) {
-    existing.pendingQueue.push({ ctx: entry.ctx });
-  } else {
-    // No active task? Spawn immediately
-    entry.ctx.message.text = entry.text;
-    handleTextMessage(entry.ctx).catch(console.error);
-  }
+  // T13: Push to NEW queueWaiting array
+  queueWaiting.push({ ctx: entry.ctx, text: entry.text });
+
+  await ctx.editMessageText(`⏳ Queued (position ${queueWaiting.length}). Will start when pool has capacity.`);
+  await ctx.answerCallbackQuery();
 });
 
 // T12: Parallel choice
@@ -1079,14 +1087,21 @@ bot.on('message:text', async (ctx) => {
   // T10: /status short-circuit (before auth/duplicate checks)
   if (text === '/status') {
     const tasks = pool.status();
-    if (tasks.length === 0) {
-      return ctx.reply('📋 No tasks running.');
+    let out = tasks.length === 0
+      ? '📋 No tasks running.'
+      : `📋 Running tasks: ${tasks.length}/5\n` + tasks.map(t => {
+          const elapsed = formatElapsed(t.elapsedMs);
+          return `  #${t.id}  ${elapsed}  ${t.prompt.slice(0, 60)}${t.prompt.length > 60 ? '…' : ''}`;
+        }).join('\n');
+
+    // T13: Show queue depth
+    if (queueWaiting.length > 0) {
+      out += `\n\nQueued: ${queueWaiting.length}\n` + queueWaiting.map(q =>
+        `  → "${q.text.slice(0, 60)}${q.text.length > 60 ? '…' : ''}"`
+      ).join('\n');
     }
-    const lines = tasks.map(t => {
-      const elapsed = formatElapsed(t.elapsedMs);
-      return `  #${t.id}  ${elapsed}  ${t.prompt.slice(0, 60)}${t.prompt.length > 60 ? '…' : ''}`;
-    });
-    return ctx.reply(`📋 Running tasks: ${tasks.length}/5\n${lines.join('\n')}`);
+
+    return ctx.reply(out);
   }
 
   // T11: /cancel <id> or /cancel all
