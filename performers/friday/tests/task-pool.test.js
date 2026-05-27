@@ -24,3 +24,27 @@ test('spawn rejects when pool full', () => {
   assert.strictEqual(c.accepted, false);
   assert.strictEqual(c.taskId, null);
 });
+
+test('cancel removes task and kills worker', async () => {
+  const factory = mockWorkerFactory();
+  let cancelledRecord = null;
+  let cancelErr = null;
+  const pool = new TaskPool({
+    maxConcurrent: 5,
+    workerFactory: factory,
+    onError: (rec, err) => { cancelledRecord = rec; cancelErr = err; }
+  });
+  const { taskId } = pool.spawn('hello', {}, 1);
+  const ok = pool.cancel(taskId);
+  await new Promise(r => setImmediate(r));
+  assert.strictEqual(ok, true);
+  assert.strictEqual(pool.runningCount(), 0);
+  assert.strictEqual(factory.created[0].handle.killed, true);
+  assert.strictEqual(cancelledRecord.id, taskId);
+  assert.match(cancelErr.message, /cancelled/i);
+});
+
+test('cancel returns false for unknown taskId', () => {
+  const pool = new TaskPool({ maxConcurrent: 5, workerFactory: mockWorkerFactory() });
+  assert.strictEqual(pool.cancel(999), false);
+});

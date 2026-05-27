@@ -32,4 +32,15 @@ export class TaskPool {
 
     return { taskId, accepted: true };
   }
+
+  cancel(taskId) {
+    const record = this._tasks.get(taskId);
+    if (!record) return false;
+    try { record.handle.kill('SIGTERM'); } catch { /* worker already gone */ }
+    return true;
+  }
+
+  runningCount() {
+    return this._tasks.size;
+  }
 }
