@@ -7,21 +7,33 @@
 
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync, appendFileSync } from 'fs';
 import { join } from 'path';
 
 const execFileAsync = promisify(execFile);
 
-const CIRCUS_URL = 'http://localhost:6200';
-const CIRCUS_DB  = '/root/.circus/circus.db';
-const OWNER_ID   = 'kobus';
-const OWNER_KEY  = '/root/.circus/kobus.key';
-const CIRCUS_IDENTITY_DIR = '/root/.circus';
+// SQL escaping helper for SQLite string literals
+function sqlEscape(str) {
+  if (typeof str !== 'string') return '';
+  // Replace single quotes with double single quotes (SQLite escaping)
+  return str.replace(/'/g, "''").replace(/\0/g, '');
+}
+
+const CIRCUS_URL = process.env.CIRCUS_URL || 'http://localhost:6200';
+const CIRCUS_DB  = process.env.CIRCUS_DB  || '/root/.circus/circus.db';
+const OWNER_ID   = process.env.CIRCUS_OWNER_ID  || 'kobus';
+const OWNER_KEY  = process.env.CIRCUS_OWNER_KEY || '/root/.circus/kobus.key';
+const CIRCUS_IDENTITY_DIR = process.env.CIRCUS_IDENTITY_DIR || (process.env.HOME ? `${process.env.HOME}/.circus` : '/root/.circus');
+const BOT_CIRCUS_DIR = process.env.BOT_CIRCUS_DIR || '/root/bot-circus';
 
 // Runtime state
 let _ringToken = null;
 let _agentId   = null;
 let _agentName  = null;
+let _agentRole  = null;  // preserved for re-auth (avoids role drift on 401)
+
+// Export for token-budget.mjs to use
+export function getRingToken() { return _ringToken; }
 
 // Preference cache (1 hour TTL)
 let _prefsCache    = null;
@@ -37,16 +49,24 @@ async function getSharedMemoryCount() {
   if (_sharedMemoryCount !== null && (Date.now() - _sharedMemoryCountAt) < SHARED_COUNT_TTL_MS) {
     return _sharedMemoryCount;
   }
-  try {
-    const { stdout } = await execFileAsync('sqlite3', [
-      CIRCUS_DB, 'SELECT COUNT(*) FROM shared_memories;'
-    ], { timeout: 3000 });
-    _sharedMemoryCount = parseInt(stdout.trim(), 10) || 0;
-    _sharedMemoryCountAt = Date.now();
-    return _sharedMemoryCount;
-  } catch {
-    return 0; // Fail open — if DB unreadable, skip search
+  // Retry logic for transient SQLite locks
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const { stdout } = await execFileAsync('sqlite3', [
+        CIRCUS_DB, 'SELECT COUNT(*) FROM shared_memories;'
+      ], { timeout: 10000 });
+      _sharedMemoryCount = parseInt(stdout.trim(), 10) || 0;
+      _sharedMemoryCountAt = Date.now();
+      return _sharedMemoryCount;
+    } catch (err) {
+      if (attempt === 0 && err.message?.includes('locked')) {
+        await new Promise(r => setTimeout(r, 500));
+        continue;
+      }
+      return 0; // Fail open — if DB unreadable, skip search
+    }
   }
+  return 0;
 }
 
 // ── Registration ─────────────────────────────────────────────────────────────
@@ -70,12 +90,14 @@ function saveIdentity(name, agentId, ringToken) {
   try {
     mkdirSync(CIRCUS_IDENTITY_DIR, { recursive: true });
     const path = getIdentityPath(name);
-    writeFileSync(path, JSON.stringify({
+    const tmpPath = path + '.tmp';
+    writeFileSync(tmpPath, JSON.stringify({
       agent_id: agentId,
       ring_token: ringToken,
       name,
       registered_at: new Date().toISOString()
     }, null, 2));
+    renameSync(tmpPath, path);
 
     // Verify file was actually written
     const saved = existsSync(path);
@@ -102,6 +124,51 @@ async function verifyIdentity(agentId, ringToken) {
   }
 }
 
+// Agent memory database paths for passport metrics
+const AIIQ_DB_MAP = {
+  'Claw':     '/root/.claude/projects/-root/memory/memories.db',
+  'Friday':   '/root/.claude/projects/-root/memory/memories.db',
+  '007':      '/root/007-bot/data/007-memories.db',
+  'WA-Drone': '/root/ai-memory-sqlite/memories.db',
+  'webbs':    '/root/ai-memory-sqlite/memories.db',
+  'Octo':     '/root/ai-memory-sqlite/memories.db',
+};
+
+async function buildPassportMetrics(name) {
+  const defaults = {
+    predictions: { confirmed: 0, refuted: 0 },
+    beliefs: { total: 0, contradictions: 0 },
+    memory_stats: { proof_count_avg: 0, graph_connections: 0 },
+    score: { total: 5.0 },
+  };
+  try {
+    const db = AIIQ_DB_MAP[name] || '/root/ai-memory-sqlite/memories.db';
+    if (!existsSync(db)) return defaults;
+
+    const projectFilter = name === 'Claw' || name === 'Friday'
+      ? `(project IS NULL OR project NOT IN ('TestProject','ProjectA','ProjectB','ProjectC'))`
+      : `project = '${name}'`;
+
+    const sql = `SELECT COUNT(*) as total, AVG(access_count) as avg_access, SUM(CASE WHEN access_count >= 3 THEN 1 ELSE 0 END) as confirmed FROM memories WHERE active=1 AND ${projectFilter};`;
+    const { stdout } = await execFileAsync('sqlite3', [db, sql], { timeout: 5000 });
+    const parts = stdout.trim().split('|');
+    if (parts.length < 3) return defaults;
+
+    const total = parseInt(parts[0]) || 0;
+    const avgAccess = parseFloat(parts[1]) || 0;
+    const confirmed = parseInt(parts[2]) || 0;
+
+    return {
+      predictions: { confirmed, refuted: Math.max(0, total - confirmed) },
+      beliefs: { total, contradictions: 0 },
+      memory_stats: { proof_count_avg: Math.min(avgAccess / 5, 1.0), graph_connections: Math.min(total / 10, 20) },
+      score: { total: Math.min(5.0 + (confirmed / 50), 10.0) },
+    };
+  } catch {
+    return defaults;
+  }
+}
+
 /**
  * Register this bot with Circus. Call once on startup.
  * Uses persistent identity files to avoid creating new agents on every restart.
@@ -109,15 +176,29 @@ async function verifyIdentity(agentId, ringToken) {
  * @param {string} role  e.g. 'assistant' | 'builder' | 'intelligence'
  */
 export async function circusRegister(name, role) {
-  // Try to reuse saved identity
+  // Check token expiry before reusing — force re-register if <7 days left
   const saved = loadIdentity(name);
-  if (saved) {
-    const valid = await verifyIdentity(saved.agent_id, saved.ring_token);
+  if (saved?.ring_token) {
+    try {
+      const payload = JSON.parse(Buffer.from(saved.ring_token.split('.')[1], 'base64').toString());
+      const expiresInMs = (payload.exp * 1000) - Date.now();
+      if (expiresInMs < 7 * 24 * 60 * 60 * 1000) {
+        console.log(`[Circus] Token expires in ${Math.round(expiresInMs / 86400000)}d — forcing re-register`);
+        try { unlinkSync(getIdentityPath(name)); } catch {}
+      }
+    } catch {}
+  }
+
+  // Try to reuse saved identity
+  const savedFresh = loadIdentity(name);
+  if (savedFresh) {
+    const valid = await verifyIdentity(savedFresh.agent_id, savedFresh.ring_token);
     if (valid) {
-      _ringToken = saved.ring_token;
-      _agentId = saved.agent_id;
+      _ringToken = savedFresh.ring_token;
+      _agentId = savedFresh.agent_id;
       _agentName = name;
-      console.log(`[Circus] ✅ Reused identity for ${name} (${saved.agent_id})`);
+      _agentRole = role;
+      console.log(`[Circus] ✅ Reused identity for ${name} (${savedFresh.agent_id})`);
       return _ringToken;
     }
     console.log(`[Circus] Saved identity invalid, re-registering...`);
@@ -128,10 +209,7 @@ export async function circusRegister(name, role) {
     const passport = {
       identity: { name, role },
       capabilities: ['memory', 'preference'],
-      predictions: { confirmed: 0, refuted: 0 },
-      beliefs: { total: 0, contradictions: 0 },
-      memory_stats: { proof_count_avg: 0, graph_connections: 0 },
-      score: { total: 5.0 },
+      ...await buildPassportMetrics(name),
       graph_summary: { entities: [] },
       traits: {}
     };
@@ -161,6 +239,7 @@ export async function circusRegister(name, role) {
         _ringToken = retryData.ring_token || retryData.token;
         _agentId = retryData.agent_id || retryData.id || uniqueName;
         _agentName = name;
+        _agentRole = role;
 
         if (!_ringToken) {
           console.error('[Circus] Retry response missing token. Got:', JSON.stringify(Object.keys(retryData)));
@@ -180,6 +259,7 @@ export async function circusRegister(name, role) {
     _ringToken = data.ring_token || data.token;
     _agentId = data.agent_id || data.id || name;
     _agentName = name;
+    _agentRole = role;
 
     if (!_ringToken) {
       console.error('[Circus] Register response missing token. Got:', JSON.stringify(Object.keys(data)));
@@ -193,6 +273,62 @@ export async function circusRegister(name, role) {
     console.error('[Circus] Register error (non-fatal):', err.message);
     return null;
   }
+}
+
+export async function circusJoinRooms(rooms = ['memory-commons']) {
+  if (!_ringToken) { console.warn('[Circus] Not registered — skipping room join'); return; }
+  _lastRooms = rooms;
+  for (const slug of rooms) {
+    try {
+      const res = await fetch(`${CIRCUS_URL}/api/v1/rooms/room-${slug}/join`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_ringToken}` },
+        body: JSON.stringify({ sync: true })
+      });
+      if (res.ok) console.log(`[Circus] ✅ Joined room: ${slug}`);
+      else if (res.status === 400 || res.status === 409) { /* already a member */ }
+      else console.warn(`[Circus] Join ${slug} failed ${res.status}: ${await res.text()}`);
+    } catch (err) {
+      console.warn(`[Circus] Join ${slug} error (non-fatal):`, err.message);
+    }
+  }
+}
+
+let _heartbeatHandle = null;
+let _lastRooms = [];
+let _heartbeatFailures = 0;
+
+async function sendHeartbeat() {
+  if (!_ringToken) return;
+  try {
+    const res = await fetch(`${CIRCUS_URL}/api/v1/agents/heartbeat`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${_ringToken}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (res.status === 401 || res.status === 403) {
+      console.warn('[Circus] Heartbeat got 401 — re-authing...');
+      await handleAuthFailure();
+    }
+    // Reset failure counter on success
+    _heartbeatFailures = 0;
+  } catch (err) {
+    _heartbeatFailures++;
+    console.warn(`[Circus] Heartbeat failed (${_heartbeatFailures}): ${err.message}`);
+    if (_heartbeatFailures >= 3) {
+      console.error('[Circus] 3 consecutive heartbeat failures — marking token invalid for reconnect');
+      _ringToken = null;
+      _heartbeatFailures = 0;
+    }
+  }
+}
+
+export function startHeartbeat(intervalMs = 300_000) {
+  const alreadyRunning = !!_heartbeatHandle;
+  if (alreadyRunning) clearInterval(_heartbeatHandle);
+  if (!alreadyRunning) sendHeartbeat(); // skip immediate fire on restart to avoid double-hit
+  _heartbeatHandle = setInterval(sendHeartbeat, intervalMs);
+  console.log(`[Circus] Heartbeat ${alreadyRunning ? 'restarted' : 'started'} (every ${Math.round(intervalMs / 1000)}s)`);
 }
 
 // ── Auto-Reauth Helper ───────────────────────────────────────────────────────
@@ -211,17 +347,18 @@ async function handleAuthFailure() {
   try {
     const identityPath = getIdentityPath(_agentName);
     if (existsSync(identityPath)) {
-      // Delete the invalid identity file
-      const { unlinkSync } = await import('fs');
       unlinkSync(identityPath);
     }
   } catch (err) {
     console.error('[Circus] Failed to clear identity file:', err.message);
   }
 
-  // Re-register (role is unknown here, use generic 'assistant')
-  // The caller should know the correct role, but for auto-reauth we use a safe default
-  const newToken = await circusRegister(_agentName, 'assistant');
+  const newToken = await circusRegister(_agentName, _agentRole || 'assistant');
+  if (newToken) {
+    // Rejoin rooms after re-auth — _lastRooms tracks what rooms this agent was in
+    if (_lastRooms.length) await circusJoinRooms(_lastRooms);
+    startHeartbeat();
+  }
   return newToken !== null;
 }
 
@@ -234,23 +371,31 @@ async function handleAuthFailure() {
 export async function getActivePreferences() {
   if (_prefsCache && (Date.now() - _prefsCacheAt) < PREFS_TTL_MS) return _prefsCache;
 
-  try {
-    const { stdout } = await execFileAsync('sqlite3', [
-      CIRCUS_DB, '-json',
-      `SELECT field_name, value FROM active_preferences WHERE owner_id = '${OWNER_ID}'`
-    ], { timeout: 5000 });
+  // Retry logic for transient SQLite locks
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const { stdout } = await execFileAsync('sqlite3', [
+        CIRCUS_DB, '-json',
+        `SELECT field_name, value FROM active_preferences WHERE owner_id = '${sqlEscape(OWNER_ID)}'`
+      ], { timeout: 10000 });
 
-    const rows = stdout.trim() ? JSON.parse(stdout) : [];
-    const prefs = {};
-    for (const r of rows) prefs[r.field_name] = r.value;
+      const rows = stdout.trim() ? JSON.parse(stdout) : [];
+      const prefs = {};
+      for (const r of rows) prefs[r.field_name] = r.value;
 
-    _prefsCache   = prefs;
-    _prefsCacheAt = Date.now();
-    return prefs;
-  } catch (err) {
-    console.error('[Circus] getActivePreferences error (non-fatal):', err.message);
-    return _prefsCache || {};
+      _prefsCache   = prefs;
+      _prefsCacheAt = Date.now();
+      return prefs;
+    } catch (err) {
+      if (attempt === 0 && err.message?.includes('locked')) {
+        await new Promise(r => setTimeout(r, 500));
+        continue;
+      }
+      console.error('[Circus] getActivePreferences error (non-fatal):', err.message);
+      return _prefsCache || {};
+    }
   }
+  return _prefsCache || {};
 }
 
 /**
@@ -307,19 +452,20 @@ export async function publishPreference(field, value, confidence, reasoning) {
     const memoryId = hexOut.trim();
 
     // Sign with Ed25519 via Python (Circus's canonicalize_for_signing)
+    // Pass variables via sys.argv to prevent command injection
     const signScript = [
       'import sys, base64, json; sys.path.insert(0, "/root/circus")',
       'from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey',
       'from cryptography.hazmat.primitives import serialization',
       'from circus.services.bundle_signing import canonicalize_for_signing',
-      `priv = base64.b64decode(open('${OWNER_KEY}').read().strip())`,
+      'priv = base64.b64decode(open(sys.argv[1]).read().strip())',
       'pk = Ed25519PrivateKey.from_private_bytes(priv)',
-      `payload = {"agent_id": "${_agentId}", "memory_id": sys.argv[1], "owner_id": "${OWNER_ID}", "timestamp": sys.argv[2]}`,
+      'payload = {"agent_id": sys.argv[2], "memory_id": sys.argv[3], "owner_id": sys.argv[4], "timestamp": sys.argv[5]}',
       'sig = pk.sign(canonicalize_for_signing(payload))',
       'print(base64.b64encode(sig).decode())'
     ].join('\n');
 
-    const { stdout: sigOut } = await execFileAsync('python3', ['-c', signScript, memoryId, timestamp], { timeout: 10000 });
+    const { stdout: sigOut } = await execFileAsync('python3', ['-c', signScript, OWNER_KEY, _agentId, memoryId, OWNER_ID, timestamp], { timeout: 10000 });
     const signature = sigOut.trim();
 
     const body = {
@@ -384,6 +530,7 @@ export async function publishPreference(field, value, confidence, reasoning) {
  * Returns array of {field, value, confidence, reasoning}
  */
 export function detectPreferenceSignals(text) {
+  if (!text || text.length > 2000) return [];
   const lower = text.toLowerCase();
   const signals = [];
 
@@ -467,9 +614,23 @@ export async function getRelevantSharedKnowledge(query, { limit = 3 } = {}) {
   const count = await getSharedMemoryCount();
   if (count === 0) return '';
 
+  // Extract key terms from query (skip stop words, keep meaningful nouns/verbs)
+  const STOP_WORDS = new Set(['the','a','an','is','are','was','were','be','been','being',
+    'have','has','had','do','does','did','will','would','could','should','may','might',
+    'this','that','these','those','it','its','and','or','but','for','with','at','to',
+    'of','in','on','by','from','up','about','into','can','you','me','my','your','we',
+    'i','what','how','why','when','where','who','yes','no','not','just','now','ok',
+    'hey','hi','help','please','thanks','fix','make','get','use','run','go','let']);
+  const keywords = query.toLowerCase()
+    .match(/\b[a-z]\w{2,}\b/g)
+    ?.filter(w => !STOP_WORDS.has(w))
+    ?.slice(0, 5)
+    ?.join(' ') || query.slice(0, 50);
+
   try {
-    const url = `${CIRCUS_URL}/api/v1/memory-commons/search?q=${encodeURIComponent(query)}&limit=${limit}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
+    const url = `${CIRCUS_URL}/api/v1/memory-commons/search?q=${encodeURIComponent(keywords)}&limit=${limit}`;
+    const headers = _ringToken ? { 'Authorization': `Bearer ${_ringToken}` } : {};
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(3000) });
     if (!res.ok) return '';
 
     const data = await res.json();
@@ -523,7 +684,7 @@ export async function writeSharedKnowledge(content, category, confidence, domain
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_ringToken}` },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(150000), // 150s — conflict detection can take 130s on CPU for non-learning categories
     });
   }
 
@@ -580,7 +741,7 @@ export async function writeCorrection(correctedContent, reason, agentName, super
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_ringToken}` },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(10000),
     });
   }
 
@@ -715,16 +876,26 @@ export function shouldShareKnowledge(userMessage, response) {
 
 /** Registry: task_type → async handler(payload, task) → result */
 const _taskHandlers = new Map();
+const _taskHandlerMeta = new Map(); // task_type → { useWorker: bool }
 let _pollerHandle = null;
+
+// Performer ID map: Circus agent name → bot-circus performers/{id}/
+const _PERFORMER_ID = {
+  'Octo': 'octo', 'webbs': 'webbs', 'Friday': 'friday',
+  '007': '007', 'Claw': 'claw', 'WA-Drone': 'wa-drone',
+};
+const PERFORMERS_DIR = process.env.PERFORMERS_DIR || `${BOT_CIRCUS_DIR}/performers`;
 
 /**
  * Register a handler for a specific task type.
- * @param {string} taskType  e.g. 'research', 'build', 'notify'
- * @param {Function} handler async (payload, task) => result
+ * @param {string}   taskType  e.g. 'research', 'build', 'notify'
+ * @param {Function} handler   async (payload, task) => result  (used as fallback / for notify)
+ * @param {Object}   opts      { useWorker: true } → route to ephemeral bot-circus worker
  */
-export function registerTaskHandler(taskType, handler) {
+export function registerTaskHandler(taskType, handler, opts = {}) {
   _taskHandlers.set(taskType, handler);
-  console.log(`[Circus] Task handler registered: ${taskType}`);
+  _taskHandlerMeta.set(taskType, opts);
+  console.log(`[Circus] Task handler registered: ${taskType}${opts.useWorker ? ' (worker)' : ''}`);
 }
 
 /**
@@ -773,13 +944,53 @@ async function processTask(task) {
 
   try {
     const handler = _taskHandlers.get(task_type);
-    if (!handler) {
+    const meta    = _taskHandlerMeta.get(task_type) || {};
+
+    if (!handler && !meta.useWorker) {
       await updateTaskState(task_id, 'completed', {
         note: `No handler registered for task type '${task_type}' on this agent`,
         acknowledged: true,
         agent: _agentName
       });
       console.log(`[Circus] Task ${task_id} acknowledged (no handler for '${task_type}')`);
+      return;
+    }
+
+    // Route to ephemeral sub-worker if useWorker flag set and performer exists
+    const performerId = _PERFORMER_ID[_agentName];
+    if (meta.useWorker && performerId) {
+      const prompt = typeof payload === 'string'
+        ? payload
+        : (payload.prompt || payload.message || payload.brief || payload.description || JSON.stringify(payload, null, 2));
+
+      console.log(`[Circus] Task ${task_id} → dispatching to worker [${performerId}]`);
+      const { dispatch } = await import(`${BOT_CIRCUS_DIR}/dispatch.mjs`);
+      const workerResult = await dispatch(performerId,
+        `# Circus Task\nType: ${task_type}\nFrom: ${from_agent_id}\n\n${prompt}`
+      );
+
+      // Append findings to performer shared memory (MEMORY.md)
+      const memPath = `${PERFORMERS_DIR}/${performerId}/MEMORY.md`;
+      if (existsSync(memPath)) {
+        appendFileSync(memPath,
+          `\n---\n${new Date().toISOString().slice(0,16)} | task:${task_type} from:${from_agent_id}\n${workerResult.slice(0, 400)}\n`
+        );
+      }
+
+      // Store result in AI-IQ so it survives restarts and gets promoted to Circus
+      try {
+        const execFileAsync = promisify(execFile);
+        const summary = workerResult.replace(/\n/g, ' ').slice(0, 300);
+        await execFileAsync('memory-tool', [
+          'add', 'learning',
+          `Worker result [${task_type}]: ${summary}`,
+          '--project', _agentName,
+          '--tags', `circus,worker,${task_type}`
+        ], { timeout: 8000 });
+      } catch { /* non-fatal */ }
+
+      await updateTaskState(task_id, 'completed', { result: workerResult.slice(0, 2000), worker: true, performer: performerId });
+      console.log(`[Circus] Task ${task_id} completed via worker ✓`);
       return;
     }
 
@@ -801,7 +1012,7 @@ export async function pollTaskInbox() {
   try {
     const res = await fetch(`${CIRCUS_URL}/api/v1/tasks/inbox?state=submitted&limit=10`, {
       headers: { 'Authorization': `Bearer ${_ringToken}` },
-      signal: AbortSignal.timeout(5000)
+      signal: AbortSignal.timeout(10000)
     });
 
     if (res.status === 401 || res.status === 403) {
@@ -879,3 +1090,36 @@ export async function submitTask(toAgentId, taskType, payload, deadline = null) 
 
 /** Get this agent's Circus ID (needed to address tasks to this bot). */
 export function getAgentId() { return _agentId; }
+
+// ── Auto-Reconnect ────────────────────────────────────────────────────────────
+
+let _reconnectHandle = null;
+
+/**
+ * Start a background loop that retries Circus registration every intervalMs
+ * while _ringToken is null (e.g. if initial registration failed at startup).
+ * On success, restarts heartbeat + inbox poller automatically.
+ * Call this once per bot after circusRegister().catch(...).
+ *
+ * @param {string} name       Agent name (e.g. 'Octo')
+ * @param {string} role       Agent role
+ * @param {number} intervalMs Retry interval (default 5 min)
+ */
+export function enableAutoReconnect(name, role, intervalMs = 5 * 60_000) {
+  if (_reconnectHandle) clearInterval(_reconnectHandle);
+  _reconnectHandle = setInterval(async () => {
+    if (_ringToken) return; // already registered — nothing to do
+    console.log(`[Circus] Auto-reconnect: retrying registration for ${name}...`);
+    try {
+      const token = await circusRegister(name, role);
+      if (token) {
+        console.log(`[Circus] Auto-reconnect succeeded for ${name} ✓`);
+        if (_lastRooms.length) await circusJoinRooms(_lastRooms);
+        if (!_heartbeatHandle) startHeartbeat();
+        if (!_pollerHandle) startTaskInboxPoller();
+      }
+    } catch (err) {
+      console.warn('[Circus] Auto-reconnect attempt failed (will retry):', err.message);
+    }
+  }, intervalMs);
+}
