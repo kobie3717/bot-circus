@@ -13,3 +13,14 @@ test('spawn returns sequential task IDs starting at 1', () => {
   assert.strictEqual(c.taskId, 3);
   assert.strictEqual(a.accepted, true);
 });
+
+test('spawn rejects when pool full', () => {
+  const pool = new TaskPool({ maxConcurrent: 2, workerFactory: mockWorkerFactory() });
+  const a = pool.spawn('a', {}, 1);
+  const b = pool.spawn('b', {}, 2);
+  const c = pool.spawn('c', {}, 3);
+  assert.strictEqual(a.accepted, true);
+  assert.strictEqual(b.accepted, true);
+  assert.strictEqual(c.accepted, false);
+  assert.strictEqual(c.taskId, null);
+});
