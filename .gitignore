@@ -19,3 +19,9 @@ coverage/
 performers/*/.env
 logs/contract-violations.jsonl
 logs/dispatch.jsonl
+
+# Performer SQLite databases — runtime state, not source
+performers/*/data/*.db
+performers/*/data/*.db-journal
+performers/*/data/*.db-wal
+performers/*/data/*.db-shm
