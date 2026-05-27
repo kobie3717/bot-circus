@@ -163,6 +163,9 @@ const pool = new TaskPool({
   }
 });
 
+// T12: Pending prompts for inline keyboard choice
+const pendingPrompts = new Map(); // message_id → { ctx, text, ts }
+
 // --- Helpers ---
 
 function isQuietHours() {
@@ -815,6 +818,59 @@ bot.callbackQuery(/^edit:(.+)$/, async (ctx) => {
   await ctx.answerCallbackQuery();
 });
 
+// T12: Queue choice
+bot.callbackQuery(/^q:(\d+)$/, async (ctx) => {
+  const messageId = parseInt(ctx.match[1], 10);
+  const entry = pendingPrompts.get(messageId);
+  if (!entry) {
+    await ctx.answerCallbackQuery('Expired');
+    return;
+  }
+  pendingPrompts.delete(messageId);
+  await ctx.editMessageText('⏳ Queued. Will start when current task finishes.');
+  await ctx.answerCallbackQuery();
+
+  // Queue via old activeTasks mechanism (handleTextMessage drains it)
+  const userId = entry.ctx.from.id;
+  const existing = activeTasks.get(userId);
+  if (existing) {
+    existing.pendingQueue.push({ ctx: entry.ctx });
+  } else {
+    // No active task? Spawn immediately
+    entry.ctx.message.text = entry.text;
+    handleTextMessage(entry.ctx).catch(console.error);
+  }
+});
+
+// T12: Parallel choice
+bot.callbackQuery(/^p:(\d+)$/, async (ctx) => {
+  const messageId = parseInt(ctx.match[1], 10);
+  const entry = pendingPrompts.get(messageId);
+  if (!entry) {
+    await ctx.answerCallbackQuery('Expired');
+    return;
+  }
+  pendingPrompts.delete(messageId);
+
+  if (pool.isFull()) {
+    await ctx.editMessageText(`⚠️ Bot at capacity (${pool.runningCount()}/5 running). Try /status or /cancel <id>.`);
+    await ctx.answerCallbackQuery();
+    return;
+  }
+
+  const { taskId, accepted } = pool.spawn(entry.text, entry.ctx, messageId);
+  if (!accepted) {
+    await ctx.editMessageText(`⚠️ Pool full.`);
+    await ctx.answerCallbackQuery();
+    return;
+  }
+
+  await ctx.editMessageText(
+    `🌀 #${taskId} spawned: "${entry.text.slice(0, 60)}${entry.text.length > 60 ? '…' : ''}"`
+  );
+  await ctx.answerCallbackQuery();
+});
+
 // --- Message Handlers ---
 
 bot.on('message', (ctx, next) => {
@@ -1078,16 +1134,44 @@ bot.on('message:text', async (ctx) => {
     return;
   }
 
-  // Pool capacity check
-  if (pool.isFull()) {
-    return ctx.reply(`⚠️ Bot at capacity (${pool.runningCount()}/5). Try again in a moment.`);
+  // --- Concurrency decision (T12) ---
+  const explicitParallel = text.startsWith('/p ');
+  const prompt = explicitParallel ? text.slice(3).trimStart() : text;
+
+  if (pool.runningCount() === 0 || explicitParallel) {
+    if (pool.isFull()) {
+      return ctx.reply(`⚠️ Bot at capacity (${pool.runningCount()}/5 running). Try /status or /cancel <id>.`);
+    }
+    const { taskId, accepted } = pool.spawn(prompt, ctx, ctx.message.message_id);
+    if (!accepted) {
+      return ctx.reply(`⚠️ Pool full.`);
+    }
+    await ctx.reply(
+      `🌀 #${taskId} spawned: "${prompt.slice(0, 60)}${prompt.length > 60 ? '…' : ''}"`,
+      { reply_parameters: { message_id: ctx.message.message_id } }
+    );
+    return;
   }
 
-  // Spawn task
-  const { taskId } = pool.spawn(text, ctx, ctx.message.message_id);
-  await ctx.reply(
-    `🌀 #${taskId} spawned: "${text.slice(0, 60)}${text.length > 60 ? '…' : ''}"`,
-    { reply_parameters: { message_id: ctx.message.message_id } }
+  // Pool not empty and no /p — ask user
+  pendingPrompts.set(ctx.message.message_id, {
+    ctx,
+    text: prompt,
+    ts: Date.now()
+  });
+
+  // Evict pendingPrompts entries older than 5 minutes (opportunistic cleanup)
+  const cutoff = Date.now() - 5 * 60 * 1000;
+  for (const [mid, entry] of pendingPrompts) {
+    if (entry.ts < cutoff) pendingPrompts.delete(mid);
+  }
+
+  return ctx.reply(
+    `🤔 ${pool.runningCount()}/5 task(s) running. Queue this or run in parallel?`,
+    { reply_markup: { inline_keyboard: [[
+      { text: 'Queue (wait for current)', callback_data: `q:${ctx.message.message_id}` },
+      { text: 'Parallel (spawn now)',     callback_data: `p:${ctx.message.message_id}` }
+    ]] } }
   );
 });
 
