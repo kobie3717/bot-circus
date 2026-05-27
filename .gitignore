@@ -25,3 +25,5 @@ performers/*/data/*.db
 performers/*/data/*.db-journal
 performers/*/data/*.db-wal
 performers/*/data/*.db-shm
+performers/*/data/*.png
+performers/*/data/*.json
