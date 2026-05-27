@@ -40,6 +40,12 @@ export class TaskPool {
     return true;
   }
 
+  cancelAll() {
+    const ids = [...this._tasks.keys()];
+    for (const id of ids) this.cancel(id);
+    return ids.length;
+  }
+
   runningCount() {
     return this._tasks.size;
   }

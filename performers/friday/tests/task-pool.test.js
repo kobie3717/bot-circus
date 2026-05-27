@@ -48,3 +48,16 @@ test('cancel returns false for unknown taskId', () => {
   const pool = new TaskPool({ maxConcurrent: 5, workerFactory: mockWorkerFactory() });
   assert.strictEqual(pool.cancel(999), false);
 });
+
+test('cancelAll removes everything and returns count', async () => {
+  const factory = mockWorkerFactory();
+  const pool = new TaskPool({ maxConcurrent: 5, workerFactory: factory, onError: () => {} });
+  pool.spawn('a', {}, 1);
+  pool.spawn('b', {}, 2);
+  pool.spawn('c', {}, 3);
+  const n = pool.cancelAll();
+  await new Promise(r => setImmediate(r));
+  assert.strictEqual(n, 3);
+  assert.strictEqual(pool.runningCount(), 0);
+  assert.strictEqual(factory.created.every(w => w.handle.killed), true);
+});
