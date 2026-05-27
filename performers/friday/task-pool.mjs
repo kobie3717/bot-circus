@@ -49,4 +49,18 @@ export class TaskPool {
   runningCount() {
     return this._tasks.size;
   }
+
+  status() {
+    const now = Date.now();
+    return [...this._tasks.values()].map(r => ({
+      id: r.id,
+      prompt: r.prompt,
+      startedAt: r.startedAt,
+      elapsedMs: now - r.startedAt
+    }));
+  }
+
+  isFull() {
+    return this._tasks.size >= this.maxConcurrent;
+  }
 }

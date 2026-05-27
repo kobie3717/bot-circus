@@ -61,3 +61,16 @@ test('cancelAll removes everything and returns count', async () => {
   assert.strictEqual(pool.runningCount(), 0);
   assert.strictEqual(factory.created.every(w => w.handle.killed), true);
 });
+
+test('status returns running tasks with elapsed ms', async () => {
+  const pool = new TaskPool({ maxConcurrent: 5, workerFactory: mockWorkerFactory(), onError: () => {} });
+  pool.spawn('build hero section', { user: 'u1' }, 100);
+  await new Promise(r => setTimeout(r, 25));
+  pool.spawn('draft email', { user: 'u1' }, 101);
+  const s = pool.status();
+  assert.strictEqual(s.length, 2);
+  assert.strictEqual(s[0].id, 1);
+  assert.match(s[0].prompt, /build hero/);
+  assert.ok(s[0].elapsedMs >= 20, `expected >=20, got ${s[0].elapsedMs}`);
+  assert.ok(s[1].elapsedMs < s[0].elapsedMs);
+});
