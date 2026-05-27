@@ -2,12 +2,18 @@
   "contract_version": "1.0",
   "id": "claw",
   "name": "Claw",
-  "runtime": "shared",
+  "telegram_username": "@claw_assistant_bot",
+  "runtime": "sidecar",
   "secrets": {
     "provider": "env-file",
     "path": ".env"
   },
-  "troupe": null,
+  "troupes": [],
+  "sidecars": [
+    { "name": "email", "script": "email-reader.mjs" },
+    { "name": "monitor", "script": "monitor.mjs" },
+    { "name": "whatsapp", "script": "whatsapp.mjs" }
+  ],
   "persona_file": "SOUL.md",
   "rate_limits": {
     "messages_per_minute": 20,
@@ -18,5 +24,6 @@
     "timeout_ms": 120000
   },
   "sub_bot": true,
+  "owner": "kobie3717",
   "created_at": "2026-05-16T11:08:44.178Z"
 }
