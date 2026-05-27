@@ -172,6 +172,14 @@ function isQuietHours() {
   return sastHour >= 23 || sastHour < 8; // 23:00 - 08:00 SAST
 }
 
+function formatElapsed(ms) {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}m${r}s`;
+}
+
 async function readFileOrEmpty(path) {
   try {
     return await readFile(path, 'utf-8');
@@ -1011,6 +1019,19 @@ bot.on('message:text', async (ctx, next) => {
 // T10 adds /status, T11 adds /cancel, T12 adds full session/memory/streaming restoration.
 bot.on('message:text', async (ctx) => {
   const text = ctx.message?.text || '';
+
+  // T10: /status short-circuit (before auth/duplicate checks)
+  if (text === '/status') {
+    const tasks = pool.status();
+    if (tasks.length === 0) {
+      return ctx.reply('📋 No tasks running.');
+    }
+    const lines = tasks.map(t => {
+      const elapsed = formatElapsed(t.elapsedMs);
+      return `  #${t.id}  ${elapsed}  ${t.prompt.slice(0, 60)}${t.prompt.length > 60 ? '…' : ''}`;
+    });
+    return ctx.reply(`📋 Running tasks: ${tasks.length}/5\n${lines.join('\n')}`);
+  }
 
   // Skip commands (handled elsewhere)
   if (text.startsWith('/')) return;
