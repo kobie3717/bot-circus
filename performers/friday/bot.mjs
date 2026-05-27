@@ -1033,6 +1033,21 @@ bot.on('message:text', async (ctx) => {
     return ctx.reply(`📋 Running tasks: ${tasks.length}/5\n${lines.join('\n')}`);
   }
 
+  // T11: /cancel <id> or /cancel all
+  if (text.startsWith('/cancel ')) {
+    const arg = text.slice(8).trim();
+    if (arg === 'all') {
+      const n = pool.cancelAll();
+      return ctx.reply(`🛑 Cancelled ${n} task${n === 1 ? '' : 's'}.`);
+    }
+    const id = parseInt(arg, 10);
+    if (isNaN(id)) {
+      return ctx.reply(`Usage: /cancel <id> or /cancel all`);
+    }
+    const ok = pool.cancel(id);
+    return ctx.reply(ok ? `🛑 #${id} cancelled.` : `No task #${id}.`);
+  }
+
   // Skip commands (handled elsewhere)
   if (text.startsWith('/')) return;
 
