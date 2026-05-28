@@ -23,6 +23,7 @@ import { shouldAlert, sendAlert, getRecentAlerts, getAlertStats, muteAlerts, get
 import { captureSessionSnapshot, loadSessionContext, formatSessionContext } from '../../lib/handoff.mjs';
 import { enqueueJob, getJobStatus, listJobs, processQueue, getQueueStats } from '../../lib/queue.mjs';
 import { circusRegister, buildPreferenceContext, detectPreferenceSignals, publishPreference, getRelevantSharedKnowledge, writeSharedKnowledge, shouldShareKnowledge, writeCorrection, detectCorrectionSignal, registerTaskHandler, startTaskInboxPoller, submitTask, getAgentId } from './circus-bridge.mjs';
+import { isDuplicate, getDedupeStats } from './dedupe.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -32,7 +33,7 @@ config({ override: true });
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const ALLOWED_USER_ID = parseInt(process.env.ALLOWED_USER_ID, 10);
 const CLAUDE_CLI_PATH = process.env.CLAUDE_CLI_PATH;
-const CLAUDE_WORKING_DIR = process.env.CLAUDE_WORKING_DIR || '/root';
+const CLAUDE_WORKING_DIR = process.env.CLAUDE_WORKING_DIR || '/root/.openclaw/workspace';
 const CLAUDE_TIMEOUT = parseInt(process.env.CLAUDE_TIMEOUT, 10) || 300000; // 5 min default
 const CLAW_API_KEY = process.env.CLAW_API_KEY;
 
@@ -420,6 +421,59 @@ bot.command('clear', async (ctx) => {
   clearContext(chatId);
 
   await ctx.reply('🦀 Fresh start. Session snapshotted & cleared. Go.');
+});
+
+bot.command('stop', async (ctx) => {
+  if (!isAuthorized(ctx)) return;
+
+  const chatId = ctx.chat.id;
+
+  // Kill active Claude process if exists
+  if (global.chatProcesses && global.chatProcesses.has(chatId)) {
+    const process = global.chatProcesses.get(chatId);
+    try {
+      process.kill('SIGTERM');
+      console.log(`[Stop] Killed active process for chat ${chatId}`);
+    } catch (err) {
+      console.error(`[Stop] Failed to kill process:`, err.message);
+    }
+  }
+
+  // Clear the queue
+  if (global.chatQueues && global.chatQueues.has(chatId)) {
+    const chatQueue = global.chatQueues.get(chatId);
+    const queuedCount = chatQueue.queue.length;
+    chatQueue.queue = [];
+    chatQueue.activeProcess = null;
+    console.log(`[Stop] Cleared ${queuedCount} queued messages for chat ${chatId}`);
+    await ctx.reply(`🛑 Cancelled current task and cleared ${queuedCount} queued message${queuedCount === 1 ? '' : 's'}`);
+  } else {
+    await ctx.reply('🛑 No active task or queue to cancel');
+  }
+});
+
+bot.command('pending', async (ctx) => {
+  if (!isAuthorized(ctx)) return;
+
+  const chatId = ctx.chat.id;
+
+  if (global.chatQueues && global.chatQueues.has(chatId)) {
+    const chatQueue = global.chatQueues.get(chatId);
+    const queuedCount = chatQueue.queue.length;
+    const isActive = chatQueue.activeProcess !== null;
+
+    if (isActive && queuedCount > 0) {
+      await ctx.reply(`📋 1 task running + ${queuedCount} queued message${queuedCount === 1 ? '' : 's'}`);
+    } else if (isActive) {
+      await ctx.reply('📋 1 task running, queue empty');
+    } else if (queuedCount > 0) {
+      await ctx.reply(`📋 ${queuedCount} queued message${queuedCount === 1 ? '' : 's'} (none active — processing soon)`);
+    } else {
+      await ctx.reply('📋 No active task or queued messages');
+    }
+  } else {
+    await ctx.reply('📋 No active task or queued messages');
+  }
 });
 
 bot.command('session', async (ctx) => {
@@ -1498,6 +1552,11 @@ async function handleTextMessage(ctx) {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
+    // Register process in global state for /stop command
+    if (global.chatProcesses) {
+      global.chatProcesses.set(chatId, claudeProcess);
+    }
+
     accumulatedText = '';
     let lastSentLength = 0;
     let isTimedOut = false;
@@ -1577,20 +1636,41 @@ async function handleTextMessage(ctx) {
     claudeProcess.stdin.write(messageToSend + '\n');
     claudeProcess.stdin.end();
 
+    let wasCancelled = false;
     await new Promise((resolve, reject) => {
-      claudeProcess.on('close', (code) => {
+      claudeProcess.on('close', (code, signal) => {
         clearTimeout(timeoutHandle);
         clearInterval(heartbeatHandle);
+        // Clean up process from global state
+        if (global.chatProcesses) {
+          global.chatProcesses.delete(chatId);
+        }
         if (isTimedOut) reject(new Error('Timed out'));
+        else if (signal === 'SIGTERM') {
+          wasCancelled = true;
+          resolve(); // Don't reject on user cancellation
+        }
         else if (code !== 0) reject(new Error(`Exit code ${code}`));
         else resolve();
       });
       claudeProcess.on('error', (err) => {
         clearTimeout(timeoutHandle);
         clearInterval(heartbeatHandle);
+        // Clean up process from global state
+        if (global.chatProcesses) {
+          global.chatProcesses.delete(chatId);
+        }
         reject(err);
       });
     });
+
+    if (wasCancelled) {
+      stopTyping();
+      if (typeof thinkingMsg !== 'undefined') {
+        await ctx.api.deleteMessage(ctx.chat.id, thinkingMsg.message_id).catch(() => {});
+      }
+      return; // Exit early, /stop command already sent feedback
+    }
 
     const response = accumulatedText.trim();
 
@@ -1776,8 +1856,34 @@ async function startWebhook() {
     });
     console.log(`🦀 Webhook registered: ${WEBHOOK_URL}`);
 
-    // Per-chat lock: only one Claude response at a time per chat
-    const processingChats = new Set();
+    // Per-chat queue: track active process + pending messages
+    const chatQueues = new Map(); // chatId -> {queue: [], activeProcess: ChildProcess|null}
+
+    // Global state for /stop and /pending commands
+    global.chatProcesses = new Map(); // chatId -> ChildProcess
+    global.chatQueues = chatQueues; // Make accessible to command handlers
+
+    function getChatQueue(chatId) {
+      if (!chatQueues.has(chatId)) {
+        chatQueues.set(chatId, { queue: [], activeProcess: null });
+      }
+      return chatQueues.get(chatId);
+    }
+
+    async function processNextInQueue(chatId) {
+      const chatQueue = getChatQueue(chatId);
+      if (chatQueue.queue.length === 0) {
+        chatQueue.activeProcess = null;
+        return;
+      }
+      const nextUpdate = chatQueue.queue.shift();
+      console.log(`[Queue] Processing queued update for chat ${chatId}, ${chatQueue.queue.length} remaining`);
+      bot.handleUpdate(nextUpdate).catch(err => {
+        console.error('[Webhook] Error handling queued update:', err.message);
+      }).finally(() => {
+        processNextInQueue(chatId);
+      });
+    }
 
     // Custom HTTP server: immediately ACKs Telegram (200 OK), then processes in background.
     // Grammy's default webhookCallback has a 10s timeout which causes retries for long Claude responses.
@@ -1794,16 +1900,46 @@ async function startWebhook() {
         try {
           const update = JSON.parse(body);
           const chatId = update?.message?.chat?.id || update?.callback_query?.message?.chat?.id;
-          // Skip if already processing a message for this chat
-          if (chatId && processingChats.has(chatId)) {
-            console.log(`[Webhook] Chat ${chatId} busy, skipping duplicate update`);
+
+          // Dedupe Telegram retries — same message delivered twice → silently drop
+          const messageId = update?.message?.message_id;
+          if (chatId && messageId && isDuplicate(chatId, messageId)) {
+            console.log(`[Dedupe] Skipping duplicate message ${chatId}:${messageId}`);
             return;
           }
-          if (chatId) processingChats.add(chatId);
+
+          // Callback queries (button clicks) are processed immediately, no queue
+          if (update.callback_query) {
+            bot.handleUpdate(update).catch(err => {
+              console.error('[Webhook] Error handling callback_query:', err.message);
+            });
+            return;
+          }
+
+          if (!chatId) {
+            bot.handleUpdate(update).catch(err => {
+              console.error('[Webhook] Error handling update:', err.message);
+            });
+            return;
+          }
+
+          const chatQueue = getChatQueue(chatId);
+
+          // If chat is busy, queue the message
+          if (chatQueue.activeProcess !== null) {
+            chatQueue.queue.push(update);
+            const position = chatQueue.queue.length;
+            console.log(`[Webhook] Chat ${chatId} busy, queued update (position: ${position})`);
+            bot.api.sendMessage(chatId, `📥 Queued — running after current task finishes (position: ${position})`).catch(() => {});
+            return;
+          }
+
+          // Mark as busy and process
+          chatQueue.activeProcess = 'pending'; // Will be set to actual process in handleTextMessage
           bot.handleUpdate(update).catch(err => {
             console.error('[Webhook] Error handling update:', err.message);
           }).finally(() => {
-            if (chatId) processingChats.delete(chatId);
+            processNextInQueue(chatId);
           });
         } catch (err) {
           console.error('[Webhook] Failed to parse update:', err.message);
