@@ -7,6 +7,9 @@ import { readFile, readdir, writeFile } from 'fs/promises';
 import { existsSync, createReadStream } from 'fs';
 import { join, basename } from 'path';
 import { getOrCreateSession, clearSession, getSessionInfo, getStats } from './sessions.mjs';
+import { initDb, getRecentTasksByUser, getTasksBySubject } from './src/tasks-db.mjs';
+import { detectSubject } from './src/subject-detector.mjs';
+import { TaskOrchestrator } from './src/task-orchestrator.mjs';
 import { transcribe } from './voice.mjs';
 import { createConfirmKeyboard, addPendingAction, getPendingAction, removePendingAction, generateActionId } from './confirm.mjs';
 import { getUnread, getStats as getInboxStats, search as searchInbox, markAllRead } from './inbox.mjs';
@@ -73,17 +76,20 @@ const messageBuffers = new Map(); // userId -> { messages: string[], timer, ctx 
 
 // --- TaskPool Integration (T9) ---
 
-// Simplified Claude worker factory for TaskPool.
-// T9: collects full stdout (no streaming yet). T12+ will add full session/memory/streaming.
-function spawnClaudeWorker(prompt, ctx) {
-  // For T9: use simple stateless Claude call (no session).
-  // Full session management + memory will be restored in T12 when we refactor handleTextMessage.
+// Claude worker factory for TaskPool with session support.
+// T12 MVP: Restored session management via --resume flag.
+function spawnClaudeWorker(prompt, sessionId, ctx) {
   const args = [
     '--print',
     '--output-format', 'stream-json',
     '--verbose',
     '--model', 'sonnet',
   ];
+
+  // Add session args if sessionId provided
+  if (sessionId) {
+    args.push('--resume', sessionId);
+  }
 
   const handle = spawn(CLAUDE_CLI_PATH, args, {
     cwd: CLAUDE_WORKING_DIR,
@@ -177,6 +183,17 @@ const pool = new TaskPool({
     tryDrainQueue(); // T13: Drain queue on task error/cancellation
   }
 });
+
+// T12: Task orchestrator (DB + subject context)
+initDb();
+const orchestrator = new TaskOrchestrator({
+  pool,
+  bot,
+  getSessionForChat: getOrCreateSession,
+});
+// Cleanup stale running tasks from previous bot instance
+import { cleanupOnStartup } from './src/tasks-db.mjs';
+cleanupOnStartup();
 
 // T12: Pending prompts for inline keyboard choice
 const pendingPrompts = new Map(); // message_id → { ctx, text, ts }
@@ -505,29 +522,64 @@ bot.command('session', async (ctx) => {
 
 bot.command('status', async (ctx) => {
   if (!isAuthorized(ctx)) return;
-  await ctx.replyWithChatAction('typing');
-  const stopTyping = startTypingIndicator(ctx);
 
-  try {
-    const claudeProcess = spawn(CLAUDE_CLI_PATH, [
-      '--print', '--output-format', 'text', '--model', 'haiku',
-      '--system-prompt', 'You are Friday 💁‍♀️. Run a quick health check: docker ps --format "{{.Names}} {{.Status}}", pm2 jlist | jq -r ".[] | .name + \" \" + .pm2_env.status", curl -sf http://localhost:4000/health | jq .status, df -h / | tail -1. Report concisely with bullet points.',
-    ], { cwd: CLAUDE_WORKING_DIR, stdio: ['pipe', 'pipe', 'pipe'] });
+  // Enhanced status: show task orchestrator state + system health
+  const running = orchestrator.getRunningSnapshot();
 
-    let stdout = '';
-    claudeProcess.stdout.on('data', d => stdout += d.toString());
-    claudeProcess.stdin.write('Run the health check now\n');
-    claudeProcess.stdin.end();
-
-    await new Promise((resolve) => claudeProcess.on('close', resolve));
-    stopTyping();
-
-    const response = stdout.trim() || 'Could not run health check.';
-    for (const chunk of splitMessage(response)) await ctx.reply(chunk);
-  } catch (e) {
-    stopTyping();
-    await ctx.reply(`Health check failed: ${e.message}`);
+  if (running.length === 0) {
+    await ctx.reply('📊 No running tasks. Use /topics for subject summary.');
+    return;
   }
+
+  // Group by subject
+  const grouped = new Map();
+  for (const task of running) {
+    const subject = task.subject || 'General';
+    if (!grouped.has(subject)) grouped.set(subject, []);
+    grouped.get(subject).push(task);
+  }
+
+  const lines = [];
+  for (const [subject, tasks] of grouped) {
+    lines.push(`\n**${subject}** (${tasks.length})`);
+    for (const t of tasks) {
+      const elapsed = formatElapsed(t.elapsedMs);
+      lines.push(`  #${t.dbId} ${t.prompt_excerpt}... (${elapsed})`);
+    }
+  }
+
+  await ctx.reply('📊 Running tasks:' + lines.join('\n'));
+});
+
+bot.command('topics', async (ctx) => {
+  if (!isAuthorized(ctx)) return;
+  const summary = orchestrator.getSubjectsSnapshot();
+  if (summary.length === 0) {
+    await ctx.reply('📂 No active subjects');
+    return;
+  }
+  const lines = summary.map(s =>
+    `• ${s.subject}: ${s.running} running, ${s.queued} queued, ${s.done} done`
+  );
+  await ctx.reply('📂 Active subjects:\n' + lines.join('\n'));
+});
+
+bot.command('history', async (ctx) => {
+  if (!isAuthorized(ctx)) return;
+  const subject = ctx.match?.trim() || null;
+  const tasks = subject
+    ? getTasksBySubject(subject, 20)
+    : getRecentTasksByUser(ctx.from.id, 20);
+
+  if (tasks.length === 0) {
+    await ctx.reply('No history');
+    return;
+  }
+
+  const lines = tasks.map(t =>
+    `#${t.id} [${t.status}] ${t.subject || 'General'}: ${t.prompt.slice(0, 50)}...`
+  );
+  await ctx.reply(lines.join('\n').slice(0, 4000));
 });
 
 bot.command('memory', async (ctx) => {
@@ -833,7 +885,7 @@ bot.callbackQuery(/^edit:(.+)$/, async (ctx) => {
   await ctx.answerCallbackQuery();
 });
 
-// T12+T13: Queue choice (now uses queueWaiting array)
+// T12+T13: Queue choice (orchestrator with priority=0)
 bot.callbackQuery(/^q:(\d+)$/, async (ctx) => {
   const messageId = parseInt(ctx.match[1], 10);
   const entry = pendingPrompts.get(messageId);
@@ -843,14 +895,32 @@ bot.callbackQuery(/^q:(\d+)$/, async (ctx) => {
   }
   pendingPrompts.delete(messageId);
 
-  // T13: Push to NEW queueWaiting array
-  queueWaiting.push({ ctx: entry.ctx, text: entry.text });
+  try {
+    // Detect subject
+    const detectorCtx = { ...entry.ctx, getRecentTasksByUser };
+    const subject = detectSubject(entry.text, detectorCtx);
 
-  await ctx.editMessageText(`⏳ Queued (position ${queueWaiting.length}). Will start when pool has capacity.`);
-  await ctx.answerCallbackQuery();
+    // Enqueue with priority=0 (queue)
+    const dbId = await orchestrator.enqueue({
+      userId: entry.ctx.from.id,
+      chatId: entry.ctx.chat.id,
+      subject,
+      prompt: entry.text,
+      priority: 0,
+      replyToMessageId: messageId,
+    });
+
+    await ctx.editMessageText(
+      `⏳ Task #${dbId}${subject ? ' [' + subject + ']' : ''} queued (priority 0)`
+    );
+    await ctx.answerCallbackQuery();
+  } catch (err) {
+    await ctx.editMessageText(`❌ ${err.message}`);
+    await ctx.answerCallbackQuery();
+  }
 });
 
-// T12: Parallel choice
+// T12: Parallel choice (orchestrator with priority=1)
 bot.callbackQuery(/^p:(\d+)$/, async (ctx) => {
   const messageId = parseInt(ctx.match[1], 10);
   const entry = pendingPrompts.get(messageId);
@@ -860,23 +930,29 @@ bot.callbackQuery(/^p:(\d+)$/, async (ctx) => {
   }
   pendingPrompts.delete(messageId);
 
-  if (pool.isFull()) {
-    await ctx.editMessageText(`⚠️ Bot at capacity (${pool.runningCount()}/5 running). Try /status or /cancel <id>.`);
-    await ctx.answerCallbackQuery();
-    return;
-  }
+  try {
+    // Detect subject
+    const detectorCtx = { ...entry.ctx, getRecentTasksByUser };
+    const subject = detectSubject(entry.text, detectorCtx);
 
-  const { taskId, accepted } = pool.spawn(entry.text, entry.ctx, messageId);
-  if (!accepted) {
-    await ctx.editMessageText(`⚠️ Pool full.`);
-    await ctx.answerCallbackQuery();
-    return;
-  }
+    // Enqueue with priority=1 (parallel)
+    const dbId = await orchestrator.enqueue({
+      userId: entry.ctx.from.id,
+      chatId: entry.ctx.chat.id,
+      subject,
+      prompt: entry.text,
+      priority: 1,
+      replyToMessageId: messageId,
+    });
 
-  await ctx.editMessageText(
-    `🌀 #${taskId} spawned: "${entry.text.slice(0, 60)}${entry.text.length > 60 ? '…' : ''}"`
-  );
-  await ctx.answerCallbackQuery();
+    await ctx.editMessageText(
+      `🌀 Task #${dbId}${subject ? ' [' + subject + ']' : ''} spawned (priority 1)`
+    );
+    await ctx.answerCallbackQuery();
+  } catch (err) {
+    await ctx.editMessageText(`❌ ${err.message}`);
+    await ctx.answerCallbackQuery();
+  }
 });
 
 // --- Message Handlers ---
@@ -1149,23 +1225,34 @@ bot.on('message:text', async (ctx) => {
     return;
   }
 
-  // --- Concurrency decision (T12) ---
+  // --- Concurrency decision (T12 MVP: orchestrator) ---
   const explicitParallel = text.startsWith('/p ');
   const prompt = explicitParallel ? text.slice(3).trimStart() : text;
 
+  // Detect subject
+  const detectorCtx = { ...ctx, getRecentTasksByUser };
+  const subject = detectSubject(prompt, detectorCtx);
+
   if (pool.runningCount() === 0 || explicitParallel) {
-    if (pool.isFull()) {
-      return ctx.reply(`⚠️ Bot at capacity (${pool.runningCount()}/5 running). Try /status or /cancel <id>.`);
+    // Direct spawn
+    try {
+      const dbId = await orchestrator.enqueue({
+        userId: ctx.from.id,
+        chatId: ctx.chat.id,
+        subject,
+        prompt,
+        priority: explicitParallel ? 1 : 0,
+        replyToMessageId: ctx.message.message_id,
+      });
+
+      await ctx.reply(
+        `🌀 Task #${dbId}${subject ? ' [' + subject + ']' : ''} spawned: "${prompt.slice(0, 60)}${prompt.length > 60 ? '…' : ''}"`,
+        { reply_parameters: { message_id: ctx.message.message_id } }
+      );
+      return;
+    } catch (err) {
+      return ctx.reply(`❌ ${err.message}`);
     }
-    const { taskId, accepted } = pool.spawn(prompt, ctx, ctx.message.message_id);
-    if (!accepted) {
-      return ctx.reply(`⚠️ Pool full.`);
-    }
-    await ctx.reply(
-      `🌀 #${taskId} spawned: "${prompt.slice(0, 60)}${prompt.length > 60 ? '…' : ''}"`,
-      { reply_parameters: { message_id: ctx.message.message_id } }
-    );
-    return;
   }
 
   // Pool not empty and no /p — ask user

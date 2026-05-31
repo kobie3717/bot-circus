@@ -9,24 +9,47 @@ export class TaskPool {
     this._nextId = 1;
   }
 
-  spawn(prompt, ctx, replyToMessageId) {
+  spawn(opts) {
+    // Support both old API (prompt, ctx, replyToMessageId) and new API ({ prompt, sessionId, chatId, onResult, onError })
+    let prompt, sessionId, chatId, onResult, onError, ctx, replyToMessageId;
+
+    if (typeof opts === 'string') {
+      // Old API: spawn(prompt, ctx, replyToMessageId)
+      prompt = opts;
+      ctx = arguments[1];
+      replyToMessageId = arguments[2];
+      sessionId = null;
+      chatId = ctx?.chat?.id;
+      onResult = this.onResult;
+      onError = this.onError;
+    } else {
+      // New API: spawn({ prompt, sessionId, chatId, onResult, onError })
+      ({ prompt, sessionId, chatId, onResult, onError } = opts);
+      ctx = { chat: { id: chatId } };
+      replyToMessageId = null;
+      // Fallback to pool callbacks if not provided
+      onResult = onResult || this.onResult;
+      onError = onError || this.onError;
+    }
+
     if (this._tasks.size >= this.maxConcurrent) {
       return { taskId: null, accepted: false };
     }
+
     const taskId = this._nextId++;
     const startedAt = Date.now();
-    const { handle, promise } = this.workerFactory(prompt, ctx);
+    const { handle, promise } = this.workerFactory(prompt, sessionId, ctx);
     const record = { id: taskId, prompt, ctx, replyToMessageId, startedAt, handle };
     this._tasks.set(taskId, record);
 
     promise.then(
       (result) => {
         this._tasks.delete(taskId);
-        this.onResult?.(record, result);
+        onResult?.(taskId, result);
       },
       (err) => {
         this._tasks.delete(taskId);
-        this.onError?.(record, err);
+        onError?.(taskId, err);
       }
     );
 
