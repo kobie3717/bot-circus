@@ -119,16 +119,24 @@ export class TaskOrchestrator {
       // Build full prompt with subject context
       const fullPrompt = this._buildPrompt(task);
 
-      // Get session for this chat
-      const { sessionId } = this.getSessionForChat(task.chat_id);
+      // Get session for this chat — gracefully handle null/missing session (new chat, no session yet)
+      let sessionId = null;
+      try {
+        const sess = this.getSessionForChat(task.chat_id);
+        sessionId = sess?.sessionId ?? sess?.session_id ?? (typeof sess === 'string' ? sess : null);
+      } catch (e) {
+        // session lookup failed — proceed without session (fresh conversation)
+        sessionId = null;
+      }
 
       // Spawn in pool
       const { taskId: poolTaskId, accepted } = this.pool.spawn({
         prompt: fullPrompt,
         sessionId,
         chatId: task.chat_id,
-        onResult: (result) => this.onTaskComplete(poolTaskId, result),
-        onError: (error) => this.onTaskError(poolTaskId, error),
+        // Pool invokes callbacks as (taskId, payload) — capture both, forward payload
+        onResult: (_tid, result) => this.onTaskComplete(poolTaskId, result),
+        onError: (_tid, error) => this.onTaskError(poolTaskId, error),
       });
 
       if (accepted) {
@@ -173,7 +181,11 @@ export class TaskOrchestrator {
    * @param {number} poolTaskId
    * @param {string} result
    */
-  async onTaskComplete(poolTaskId, result) {
+  async onTaskComplete(poolTaskId, rawResult) {
+    // Normalize: pool may pass {stdout, stderr, code} or a plain string
+    const result = typeof rawResult === 'string'
+      ? rawResult
+      : (rawResult?.stdout || rawResult?.text || JSON.stringify(rawResult ?? ''));
     const dbId = this._poolToDb.get(poolTaskId);
     if (!dbId) {
       console.error('[Orchestrator] Pool task completed but no DB mapping:', poolTaskId);
@@ -214,7 +226,11 @@ export class TaskOrchestrator {
    * @param {number} poolTaskId
    * @param {Error} error
    */
-  async onTaskError(poolTaskId, error) {
+  async onTaskError(poolTaskId, rawError) {
+    // Normalize: error may be Error instance, string, or {message,...}
+    const error = typeof rawError === 'string'
+      ? rawError
+      : (rawError?.message || rawError?.stderr || JSON.stringify(rawError ?? 'unknown error'));
     const dbId = this._poolToDb.get(poolTaskId);
     if (!dbId) {
       console.error('[Orchestrator] Pool task failed but no DB mapping:', poolTaskId);
