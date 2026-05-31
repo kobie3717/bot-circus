@@ -2,136 +2,106 @@
 
 *Shared brain for all ephemeral sub-workers. Write findings here; next worker will read them.*
 
-## Seeded Knowledge (from AI-IQ)
+**Structure upgraded to Octo gold standard on 2026-05-31.**
+*Archived old detailed logs to memory/archive-2026-05-31.md*
 
-- Action completed: Memory updated. ✅  **Sitrusfees** — production ready, DB skoon, musiek+overlay+SEO+admin alles reg.   **Memzy** — security fixes toegepas, mobiel verbeter, E-E-A-T werk nog uitstaande.
-- User preference: MEMZY EVENT CHECKLIST (SCHOOL FEST)
-- PRE-EVENT SETUP
-- - [ ] WhatsApp (Baileys) connected and stable
-- - [ ] Backend running (PM2 memzy-api healthy)
-- - [ ] Database connected and logging posts
-- - [ ] Storage path writable (/root/memzy-uploads/walls/)
-- - [ ] Wall created with correct hashtag (#schoolfest)
-- - [ ] Test message (text, image, video) working end-to-end
-- - [ ] Sender session logic working (no need to resend hashtag)
-- DISPLAY & UX
-- - [ ] Big screen/TV connected and visible
-- - [ ] Wall auto-refresh (Socket.IO working)
-- - [ ] Instructions clearly visible on screen:
-- SEND TO: +27 62 055 0314
-- TYPE: #schoolfest
-- - [ ] QR code generated (prefilled WhatsApp message)
-- - [ ] QR printed/displayed at key locations
-- WHATSAPP FLOW
-- - [ ] Auto-reply message enabled:
-- “🎉 You’re on the School Fest Wall! Keep sending!”
-- - [ ] Hashtag parsing working
-- - [ ] Messages without hashtag after first send still work
-- - [ ] Duplicate/spam handling acceptable
-- LIVE EVENT OPERATIONS
-- - [ ] Seed wall with 5–10 starter posts
-- - [ ] Assign “Memzy hype person” (announce every ~30 min)
-- - [ ] Monitor WhatsApp connection continuously
-- - [ ] Monitor message delay / failures
-- - [ ] Keep backup internet (hotspot ready)
-- MODERATION & CONTROL
-- - [ ] Delete post option working
-- - [ ] Block sender option working
-- - [ ] Quick access to admin/moderation panel
-- PERFORMANCE & STABILITY
-- - [ ] Media processing is async (no blocking)
-- - [ ] System handles multiple messages at once
-- - [ ] No crashes under burst testing
-- - [ ] Logs visible for quick debugging
-- CONTENT & MARKETING
-- - [ ] Record videos of wall in action
-- - [ ] Capture people using QR / sending messages
-- - [ ] Take photos of display setup
-- - [ ] Get testimonial from organizer after event
-- POST-EVENT
-- - [ ] Confirm all posts saved correctly
-- - [ ] Backup database + uploads
-- - [ ] Export/share gallery if needed
-- - [ ] Collect feedback (what worked / didn’t)
-- Action completed: Also update skills ecosystem and add memzy + baileys-antiban entries:Memory updated ✅  Updated sections: - **ai_iq** — 5 Claw Stack upgrades (PPR, procedural memory, context budgeting, agent-ID, discl
-- Action completed: Found it. When someone sends just `#igverjaar7`, the code: 1. Matches the wall ✅ 2. Stores the hashtag as the post text ❌  It should strip the wall hashtag from the text, and if there's nothing left (
-- Test memory for Friday bot integration
-- Action completed: Done ✅ — memory updated with Ghost Nr gist link, Baileys PR comment, v2.0.0/v2.1.0 releases, bounty research, and WPP attack surface all parked for later.
-- Action completed: Done ✅  **What changed on whatshubb.co.za:** - **Quick Start section** — Broadcast, AutoResponder, Inbox, Campaigns front and center with green borders when connected - **Category tabs** — All | Messa
-- User preference: ---
-- 🦀 SCAVENGE: alirezarezvani/claude-skills (10.6K⭐, Markdown/Shell)
-- "OpenClaw-native skill library — C-suite advisor, competitive intel,
-- engineering agents, marketing playbooks"
-- Stack: Claude Code, OpenClaw, gh CLI, bash hooks
-- Age: ~8 months | Last active: recent
-- 🟢 GRAB NOW (4 findings)
-- • **5-Layer Competitive Intel System** [monitoring]
-- Full CI pipeline: signal collection → scoring → battlecard →
-- tracking → alerts. Battlecard template: 30-sec summary, real
-- weaknesses (win/loss data only), proof-pointed advantages,
-- objection scripts.
-- File: c-level-advisor/competitive-intel/SKILL.md +
-- templates/battlecard-template.md
-- Maps to: AI-IQ vs Mem0/Zep/Letta | WhatsAuction vs BidVault
-- • **12-Dimension Competitive Teardown** [monitoring]
-- Rubric: product moves, pricing, funding, hiring signals,
-- partnerships, customer wins/losses, messaging shifts.
-- Bonus: iTunes Search API for app reviews, job posting stack
-- signals, SEO gap analysis — all automated.
-- File: product-team/competitive-teardown/SKILL.md
-- Maps to: 007 bot / ongoing competitor tracking
-- • **Self-Improving Agent Lifecycle** [plugin]
-- MEMORY.md → auto-memory → /si:review → /si:promote → CLAUDE.md.
-- Scoring: durability(0-3) + impact(0-3) + scope(0-3). Promote ≥6.
-- PostToolUse hook auto-captures errors. Commands: /si:review
-- /si:promote /si:extract /si:status /si:remember
-- File: engineering-team/self-improving-agent/SKILL.md
-- Maps to: AI-IQ memory promotion pipeline — direct upgrade
-- • **Cold Email Day-Sequence Engine** [scheduler]
-- Day 1/4/9/16/25 cadence. 3 modes: write first, build sequence,
-- iterate from data. Persona-aware, objection-aware, SA-adaptable.
-- File: marketing-skill/cold-email/SKILL.md
-- Maps to: WhatsAuction — 10 customers by Apr 12 outreach push
-- 🟡 INTERESTING (3 findings)
-- • **AgentHub — N-Way Worktree Competition** [worker]
-- Spawn N agents in isolated git worktrees, each solves same
-- problem differently, coordinator scores + merges winner.
-- Commands: /hub:init /hub:spawn /hub:eval /hub:merge
-- File: engineering/agenthub/SKILL.md
-- Needs: The Circus integration; medium effort
-- • **Autoresearch Agent (Karpathy Loop)** [scheduler]
-- Edit file → run metric → keep if better (commit) → discard if
-- worse (reset) → loop indefinitely. Fully autonomous improvement.
-- File: engineering/autoresearch-agent/SKILL.md
-- Needs: metric definition per project; high value, medium effort
-- • **5-Stage Churn Prevention Flow** [middleware]
-- Cancel Trigger → Exit Survey → Dynamic Save Offer → Confirmation
-- → Post-Cancel. Dunning sequences + payment recovery included.
-- File: marketing-skill/churn-prevention/SKILL.md
-- Maps to: WhatsAuction subscription retention (future)
-- 📦 DEPS WORTH CHECKING
-- • Repo is skill/markdown-only — no package.json deps
-- 🔴 SKIPPED: blogging-skill (wrong domain), legal-advisor
-- (irrelevant), sales-call-coach (low priority), brand-voice
-- (premature for stage)
-- ⭐ SCAVENGE SCORE: 8.7/10
-- Breakdown: Relevance 9/10 | Quality 8/10 | Adoptability 9/10
-- 📊 Pass 1: 15 files | Pass 2: 10 files | Cache: miss |
-- Novelty: HIGH — nothing overlaps existing memory
-- 💾 Saved: scavenge-alirezarezvani-claude-skills
-- ---
-- Which findings do you want to keep or skip? (e.g. "1 2 3 keep", "4 skip", "all keep")
-- Optional: give a reason.
-- Action completed: OK, I have a good picture now. Let me present the situation to Kobus rather than diving blindly.  Here's where memzy is at:  **Done** ✅ - API healthy (port 4040) - Landing page complete (FAQ, contact,
-- Action completed: Seeing it — claw-bot is resuming a stale session and getting 1-char responses. That session's busted. Let me clear it:Session cleared. That was the problem — session `d83a1dc2` had 46 messages of hist
-- Action completed: Both getting 409s simultaneously — that points to something external triggering both at the same time. Let me find it:Found it. **AutoClaw runs every 5 minutes** and could be restarting the bots. Let
-- Action completed: Let me run through what I can actually verify right now:Here's the honest checklist status:  **✅ Done / working:** - Backend healthy (PM2, DB connected) - Storage writable - WhatsApp **connected** (se
-- Action completed: Memory updated. Now continuing to the next step — i18n for the remaining pages (Invoices, Home dashboard, Bidders). These are the last untranslated pages.Done ✅ Translated and deployed:  **Pages done:
-- Action completed: For #5 — keep it simple: **one-click settle**. Auctioneer confirms, system calculates payout. No approval workflow needed for v1 — Igor and Wesley are small operations, they don't need bureaucracy. Ad
-- Action completed: All 7 shared knowledge tests passing. Let me verify the bridge is deployed to all 3 bots and check git status:Days 1-3 are built and working. Need to commit. Let me quickly check what changed:Done. **
+---
+
+## Core Knowledge
+
+**Friday Identity:**
+- Agent ID: friday-174577
+- Telegram: @friday_assistant_bot
+- Runtime: Custom bot.mjs (57KB) with grammy long-poll
+- Siblings: Octo (/root/octo-workspace), Claw (/root/.openclaw/workspace)
+- Circus: http://localhost:6200
+
+**Owner: Kobus (Hannes)**
+- Location: South Africa (SAST, UTC+2)
+- Family: Wife, 5 kids — protect his time
+- Style: Casual, direct, show results
+- Contact: Telegram @Theclawbotbot, WhatsApp +27825651069
+
+---
+
+## Active Projects
+
+**WhatsAuction** — Main priority
+- Port 4000, PM2: whatsauction-api + whatsapp-worker
+- DB: PostgreSQL (vpn_user/vpn_secure_password_2025)
+- Goal: 10 paying customers by Apr 2026
+- Status: Live, actively onboarding
+
+**Relay AI / hydra-note** — Yacht agency SaaS
+- Port 3030, PM2: relay-ai
+- WaSP multi-tenant sessions
+- Customer: Matt Bullamore
+- Status: Production, PM2 stable
+
+**Memzy** — Event social wall
+- Port 4040
+- WhatsApp Baileys integration
+- Use case: School fests, weddings
+- Status: Production-ready, E-E-A-T work outstanding
+- Archive: Full event checklist in memory/archive-2026-05-31.md
+
+**Recon** — BD competitive intel (May 25-31 hackathon)
+- 10 modes, agentic loop 15s
+- Live: recon.whatshubb.co.za
+- Status: Complete, demo-ready
+
+**FlashVault** — VPN service
+- Secondary priority
+- Status: Stable
+
+---
+
+## Key Learnings
+
+**WhatsAuction i18n completed:**
+- All pages translated (Invoices, Home, Bidders)
+- Days 1-3 built and working
+- One-click settle feature planned (v1 no approval workflow)
+
+**Circus Mesh Integration:**
+- Shared knowledge bridge deployed to all 3 bots
+- 7 shared knowledge tests passing
+- Auto-memory, preference detection, correction signals working
+
+**Claw Session Management:**
+- Old sessions can get stale (46+ message history)
+- Clear session if getting 1-char responses (409 errors)
+- AutoClaw runs every 5 min — can trigger simultaneous bot restarts
+
+**Friday Capabilities:**
+- Email: IMAP/SMTP via Zoho (email-reader.mjs, email-sender.mjs)
+- Voice: Whisper transcription (voice.mjs)
+- Inbox: Centralized aggregator (inbox.mjs)
+- Dashboards: fullDashboard(), serverDashboard()
+- Actions: Predefined server ops (actions.mjs)
+- Circus: Full mesh integration (circus-bridge.mjs 46KB)
+
+---
+
+## Disabled Services (DO NOT ALERT)
+
+- claw-whatsapp (port 7700) — STOPPED intentionally
+- claw-email (port 7701) — STOPPED intentionally
+- claw-monitor — STOPPED intentionally
+
+---
+
+## File Locations
+
+- **Friday runtime:** /root/bot-circus/performers/friday/
+- **Friday workspace (legacy):** /root/friday-workspace/
+- **WhatsAuction:** /root/whatsauction/
+- **Reference docs:** /root/.openclaw/reference/
+- **Credentials:** /root/.openclaw/credentials/
+- **Circus identity:** /root/.circus/friday-identity.json
+
+---
 
 ## Live Session Notes
 
-
-## [2026-05-16T11:19:53.576Z] Worker Result
-1, 2, 3, 4, 5.
+*(Use this section for ephemeral in-session findings)*
