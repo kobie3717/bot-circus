@@ -5,7 +5,7 @@ import { randomUUID } from 'crypto';
 import { existsSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
 
-const DB_PATH = '/root/claude-telegram-bot-friday/data/sessions.db';
+const DB_PATH = '/root/wa-drone-bot/data/sessions.db';
 
 // Ensure data directory exists
 const dir = dirname(DB_PATH);

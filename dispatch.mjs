@@ -26,6 +26,7 @@ import { join, resolve as resolvePath } from 'path';
 const PERFORMERS_DIR = '/root/bot-circus/performers';
 const MAX_WORKERS = 10;
 const DEFAULT_TIMEOUT_MS = 120_000;
+const AGENT_PACK_TIMEOUT_MS = 240_000; // Multi-agent packs need more time (flattened 5+ perspectives)
 const BOT_QUEUE_LIMIT = 5;
 
 // Path traversal validation
@@ -71,7 +72,9 @@ function _spawnWorker({ botId, workspacePath, message, resolve, reject }) {
   try {
     const soulPath = join(abs, 'SOUL.md');
     if (existsSync(soulPath)) {
-      soulContent = readFileSync(soulPath, 'utf8').slice(0, 2000);
+      // Agent packs have large multi-perspective prompts, allow up to 10K
+      const maxLen = botId.startsWith('agent-') ? 10000 : 2000;
+      soulContent = readFileSync(soulPath, 'utf8').slice(0, maxLen);
     }
   } catch { /* non-fatal */ }
 
@@ -90,12 +93,15 @@ function _spawnWorker({ botId, workspacePath, message, resolve, reject }) {
     cwd: abs,
   });
 
+  // Use longer timeout for agent-* packs (multi-perspective analysis)
+  const timeout = botId.startsWith('agent-') ? AGENT_PACK_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
+
   const timer = setTimeout(() => {
     proc.kill('SIGKILL');
     _active.delete(id);
-    reject(new Error(`[dispatch] Worker timeout (${DEFAULT_TIMEOUT_MS}ms) — botId: ${botId}`));
+    reject(new Error(`[dispatch] Worker timeout (${timeout}ms) — botId: ${botId}`));
     _processQueue();
-  }, DEFAULT_TIMEOUT_MS);
+  }, timeout);
 
   _active.set(id, { botId, proc, timer });
 

@@ -1059,7 +1059,7 @@ Use the Bash tool to clone or read the repo, then summarize key learnings.`;
     const claudeProcess = spawn(CLAUDE_CLI_PATH, [
       '--print',
       '--output-format', 'text',
-      '--model', 'opus',
+      '--model', 'sonnet',
       '--system-prompt', systemPrompt,
     ], { cwd: CLAUDE_WORKING_DIR, stdio: ['pipe', 'pipe', 'pipe'] });
 
@@ -1540,7 +1540,7 @@ async function handleTextMessage(ctx) {
       '--print',
       '--output-format', 'stream-json',
       '--verbose',
-      '--model', 'opus',
+      '--model', 'sonnet',
       ...sessionArgs,
       '--system-prompt', systemPrompt,
     ];

@@ -32,7 +32,7 @@ config({ override: true });
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const ALLOWED_USER_ID = parseInt(process.env.ALLOWED_USER_ID, 10);
 const CLAUDE_CLI_PATH = process.env.CLAUDE_CLI_PATH;
-const CLAUDE_WORKING_DIR = process.env.CLAUDE_WORKING_DIR || '/root';
+const CLAUDE_WORKING_DIR = process.env.CLAUDE_WORKING_DIR || '/root/octo-workspace';
 const CLAUDE_TIMEOUT = parseInt(process.env.CLAUDE_TIMEOUT, 10) || 300000; // 5 min default
 const CLAW_API_KEY = process.env.CLAW_API_KEY;
 
@@ -243,7 +243,7 @@ Working directory: ${CLAUDE_WORKING_DIR}
 You have full access to the VPS via Claude Code tools (Bash, Read, Edit, Write, Grep, Glob).
 You can check servers, read logs, edit code, run commands — everything you can do.
 
-**MEMORY MANAGEMENT**: You can update your memory by editing files in /root/.openclaw/workspace/:
+**MEMORY MANAGEMENT**: You can update your memory by editing files in /root/octo-workspace/:
 - MEMORY.md - Your hot memory index
 - memory/*.md - Topic-specific memory files
 Use the Write/Edit tools to update these files when you learn something important.
@@ -1005,7 +1005,7 @@ Use the Bash tool to clone or read the repo, then summarize key learnings.`;
     const claudeProcess = spawn(CLAUDE_CLI_PATH, [
       '--print',
       '--output-format', 'text',
-      '--model', 'opus',
+      '--model', 'sonnet',
       '--system-prompt', systemPrompt,
     ], { cwd: CLAUDE_WORKING_DIR, stdio: ['pipe', 'pipe', 'pipe'] });
 
@@ -1486,7 +1486,7 @@ async function handleTextMessage(ctx) {
       '--print',
       '--output-format', 'stream-json',
       '--verbose',
-      '--model', 'opus',
+      '--model', 'sonnet',
       ...sessionArgs,
       '--system-prompt', systemPrompt,
     ];
