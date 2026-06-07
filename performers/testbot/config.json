@@ -1,0 +1,15 @@
+{
+  "contract_version": "1.0",
+  "id": "testbot",
+  "name": "TestBot",
+  "telegram_username": "@kobus_testbot",
+  "runtime": "custom",
+  "secrets": {
+    "provider": "env-file",
+    "path": ".env"
+  },
+  "troupes": [],
+  "sidecars": [],
+  "owner": "kobie3717",
+  "created_at": "2026-06-07T20:00:00.000Z"
+}

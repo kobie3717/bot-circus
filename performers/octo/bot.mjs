@@ -23,6 +23,8 @@ import { shouldAlert, sendAlert, getRecentAlerts, getAlertStats, muteAlerts, get
 import { captureSessionSnapshot, loadSessionContext, formatSessionContext } from '../../lib/handoff.mjs';
 import { enqueueJob, getJobStatus, listJobs, processQueue, getQueueStats } from '../../lib/queue.mjs';
 import { circusRegister, buildPreferenceContext, detectPreferenceSignals, publishPreference, getRelevantSharedKnowledge, writeSharedKnowledge, shouldShareKnowledge, writeCorrection, detectCorrectionSignal, registerTaskHandler, startTaskInboxPoller, submitTask, getAgentId } from './circus-bridge.mjs';
+import { spawnBot, loadManagedBots, killBot } from '../../lib/factory.mjs';
+import { startOvernightRun, stopOvernightRun, getOvernightStatus } from '../../lib/overnight.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -1035,6 +1037,27 @@ Use the Bash tool to clone or read the repo, then summarize key learnings.`;
   }
 });
 
+bot.command('overnight', async (ctx) => {
+  if (!isAuthorized(ctx)) return;
+  const status = getOvernightStatus();
+  if (!status) {
+    return ctx.reply('No overnight run active. Say "work on [objective]" to start one.\n— Octo 🐙');
+  }
+  const last = status.lastResult;
+  await ctx.reply([
+    `🌙 *Overnight Run Status*`,
+    ``,
+    `Objective: ${status.objective.slice(0, 100)}`,
+    `Progress: iteration ${status.iteration}/${status.maxIterations}`,
+    `Commits: ${status.committedCount}`,
+    `Last: ${last ? (last.committed ? '✅' : last.rollbacked ? '❌' : '⚪') + ' ' + last.summary.slice(0, 80) : 'starting...'}`,
+    `Elapsed: ${Math.round((Date.now() - new Date(status.startedAt)) / 60000)}min`,
+    ``,
+    `Say "stop overnight" to cancel.`,
+    `— Octo 🐙`
+  ].join('\n'), { parse_mode: 'Markdown' });
+});
+
 // --- Proactive Alerts Commands ---
 
 bot.command('alerts', async (ctx) => {
@@ -1450,6 +1473,144 @@ async function handleTextMessage(ctx) {
 
   // Add user message to context
   addToContext(chatId, 'user', userMessage);
+
+  // BOT FACTORY INTERCEPTS — handle before Claude CLI
+  const text = userMessage;
+
+  // Overnight task detection
+  const overnightMatch = /(?:work\s+on|overnight|keep\s+(?:working|improving|fixing)|run\s+overnight|while\s+i\s+sleep)\s+(.+)/i.exec(text);
+  const overnightStatusMatch = /(?:overnight\s+status|how.*overnight|what.*working\s+on)/i.test(text);
+  const overnightStopMatch = /(?:stop\s+overnight|stop\s+working|cancel\s+overnight)/i.test(text);
+
+  if (overnightStopMatch) {
+    const stopped = stopOvernightRun();
+    return ctx.reply(stopped ? '✅ Overnight run stopping after current iteration.\n— Octo 🐙' : 'No overnight run active.\n— Octo 🐙');
+  }
+
+  if (overnightStatusMatch) {
+    const status = getOvernightStatus();
+    if (!status) return ctx.reply('No overnight run active.\n— Octo 🐙');
+    const last = status.lastResult;
+    return ctx.reply([
+      `🌙 *Overnight Run*`,
+      ``,
+      `Objective: ${status.objective.slice(0, 100)}`,
+      `Progress: iteration ${status.iteration}/${status.maxIterations}`,
+      `Commits: ${status.committedCount}`,
+      `Last: ${last ? (last.committed ? '✅' : last.rollbacked ? '❌' : '⚪') + ' ' + last.summary.slice(0, 80) : 'starting...'}`,
+      ``,
+      `— Octo 🐙`
+    ].join('\n'), { parse_mode: 'Markdown' });
+  }
+
+  if (overnightMatch) {
+    const objective = overnightMatch[1].trim();
+    const status = getOvernightStatus();
+    if (status) {
+      return ctx.reply(`❌ Overnight run already active: "${status.objective}"\nStop it first with "stop overnight".\n— Octo 🐙`);
+    }
+
+    // Infer working directory from objective
+    const cwdMap = {
+      'relay': '/root/hydra-note',
+      'hydra': '/root/hydra-note',
+      'whatsauction': '/root/whatsauction',
+      'auction': '/root/whatsauction',
+      'octo': '/root/octo-workspace',
+      'circus': '/root/bot-circus',
+    };
+    let cwd = CLAUDE_WORKING_DIR || '/root/octo-workspace';
+    for (const [key, dir] of Object.entries(cwdMap)) {
+      if (objective.toLowerCase().includes(key)) { cwd = dir; break; }
+    }
+
+    await ctx.reply(`🌙 Starting overnight run...\n\n*Objective:* ${objective}\n*Repo:* ${cwd}\n*Max iterations:* 20\n\nI'll commit after each successful step and report back every 5 iterations.\n— Octo 🐙`, { parse_mode: 'Markdown' });
+
+    // Start async (don't await — runs in background)
+    startOvernightRun({
+      objective,
+      cwd,
+      maxIterations: 20,
+      onProgress: async (iteration, result) => {
+        // Report every 5 iterations or on final iteration
+        if (iteration % 5 === 0 || result.isDone || result.isStuck) {
+          const icon = result.committed ? '✅' : result.rollbacked ? '❌' : '⚪';
+          await bot.api.sendMessage(
+            ALLOWED_USER_ID,
+            `${icon} *Overnight iter ${iteration}*\n${result.summary.slice(0, 150)}\n— Octo 🐙`,
+            { parse_mode: 'Markdown' }
+          ).catch(() => {});
+        }
+      },
+      onComplete: async (summary) => {
+        const msg = [
+          `🌙 *Overnight Run Complete*`,
+          ``,
+          `Objective: ${summary.objective.slice(0, 100)}`,
+          `Iterations: ${summary.iterations}`,
+          `Commits: ${summary.committed}`,
+          `Duration: ${Math.round((new Date(summary.completedAt) - new Date(summary.startedAt)) / 60000)}min`,
+          summary.stopped ? '⚠️ Stopped manually' : summary.history.at(-1)?.isDone ? '✅ Objective complete' : '⏹️ Max iterations reached',
+          ``,
+          `Branch: ${summary.startCommit} → ${summary.endCommit}`,
+          `— Octo 🐙`
+        ].join('\n');
+        await bot.api.sendMessage(ALLOWED_USER_ID, msg, { parse_mode: 'Markdown' }).catch(() => {});
+      }
+    }).catch(err => {
+      bot.api.sendMessage(ALLOWED_USER_ID, `❌ Overnight run failed: ${err.message}\n— Octo 🐙`).catch(() => {});
+    });
+
+    return; // Don't pass to Claude
+  }
+
+  const spawnMatch = text.match(/(?:create|spawn|make|build)\s+a\s+(?:(?:new|specialist|general)\s+)?bot\s+(?:called\s+|named\s+)?([a-zA-Z][a-zA-Z0-9\s-]{1,30})?/i);
+  const listBotsMatch = /(?:list|show)\s+(?:my\s+)?bots?/i.test(text);
+  const killMatch = text.match(/(?:kill|stop|delete|remove)\s+(?:bot\s+)?@?([a-zA-Z][a-zA-Z0-9-]{1,30})/i);
+
+  if (listBotsMatch) {
+    const bots = await loadManagedBots();
+    if (bots.length === 0) {
+      return ctx.reply('No managed bots yet. Say "create a bot that..." to spawn one.\n— Octo 🐙');
+    }
+    const list = bots.map(b => `• @${b.username} (${b.type}) — ${b.rolePrompt.slice(0, 60)}`).join('\n');
+    return ctx.reply(`*My Bots:*\n${list}`, { parse_mode: 'Markdown' });
+  }
+
+  if (killMatch) {
+    const safeName = killMatch[1].toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    await killBot(safeName);
+    return ctx.reply(`✅ @${killMatch[1]} stopped and removed.\n— Octo 🐙`);
+  }
+
+  if (spawnMatch) {
+    const name = spawnMatch[1]?.trim() || 'NewBot';
+    const isSpecialist = /specialist|lightweight|simple|monitor|alert|watch/i.test(text);
+    const type = isSpecialist ? 'specialist' : 'general';
+    const rolePrompt = text.replace(/(?:create|spawn|make|build)\s+a\s+(?:(?:new|specialist|general)\s+)?bot\s+(?:called\s+|named\s+)?[a-zA-Z][a-zA-Z0-9\s-]*/i, '').trim() || `Bot named ${name}`;
+
+    await ctx.reply(`Creating *${name}* (${type} bot)...\n\n_Role: ${rolePrompt.slice(0, 100)}_\n\nThis takes ~60 seconds. ⏳`, { parse_mode: 'Markdown' });
+
+    try {
+      const result = await spawnBot({
+        octoToken: BOT_TOKEN,
+        name,
+        type,
+        rolePrompt,
+        allowedUserId: ALLOWED_USER_ID
+      });
+      await ctx.reply(`✅ *${result.name}* is live!\n\nUsername: ${result.username}\nType: ${result.type}\nPM2: \`${result.pm2Name}\`\n\nAdd it to any group or start a DM.\n— Octo 🐙`, { parse_mode: 'Markdown' });
+    } catch (err) {
+      if (err.message.includes('Token required')) {
+        // Token needs to be obtained from BotFather manually
+        await ctx.reply(`To create *${name}*, I need a BotFather token:\n\n${err.message}`, { parse_mode: 'Markdown' });
+        // TODO: store pending spawn state for token reply
+      } else {
+        await ctx.reply(`❌ Failed to spawn bot: ${err.message}\n— Octo 🐙`);
+      }
+    }
+    return; // Don't pass to Claude
+  }
 
   // Start typing indicator immediately (loops every 4s until stopped)
   const stopTyping = startTypingIndicator(ctx);
