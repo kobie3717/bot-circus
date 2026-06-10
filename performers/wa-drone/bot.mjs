@@ -15,7 +15,7 @@ import { sendEmail, verifySmtp } from './email-sender.mjs';
 import { fullDashboard, serverDashboard } from './dashboards.mjs';
 import { executeAction, listActions, getAction } from './actions.mjs';
 import { buildMemoryContext, autoStoreConversation, storeMemory, searchMemory } from './memory-bridge.mjs';
-import { circusRegister, buildPreferenceContext, detectPreferenceSignals, publishPreference, getRelevantSharedKnowledge, writeSharedKnowledge, shouldShareKnowledge, writeCorrection, detectCorrectionSignal, registerTaskHandler, startTaskInboxPoller, submitTask, getAgentId } from './circus-bridge.mjs';
+import { circusRegister, joinTroupe, buildPreferenceContext, detectPreferenceSignals, publishPreference, getRelevantSharedKnowledge, writeSharedKnowledge, shouldShareKnowledge, writeCorrection, detectCorrectionSignal, registerTaskHandler, startTaskInboxPoller, submitTask, getAgentId } from './circus-bridge.mjs';
 
 // ESM __dirname polyfill
 const __filename = fileURLToPath(import.meta.url);
@@ -51,6 +51,11 @@ console.log(`Claude CLI: ${CLAUDE_CLI_PATH}`);
 console.log(`Timeout: ${CLAUDE_TIMEOUT / 1000}s`);
 
 const bot = new Bot(BOT_TOKEN);
+
+// Per-user model selection
+const VALID_MODELS = ['haiku', 'sonnet', 'opus', 'fable'];
+const DEFAULT_MODEL = 'sonnet';
+const userModels = new Map(); // userId -> preferred model
 
 // --- Helpers ---
 
@@ -232,6 +237,9 @@ getSystemPrompt();
 circusRegister('WA-Drone', 'wa-drone', ['memory', 'preference', 'inbox', 'messaging'])
   .then(token => {
     if (token) {
+      // Join troupe for scoped memory sharing
+      joinTroupe('telegram-bots').catch(e => console.error('[Circus] troupe join failed:', e.message));
+
       // Register WA-Drone's task handlers
       registerTaskHandler('notify', async (payload) => {
         // Deliver a notification to Kobus via Telegram
@@ -292,11 +300,32 @@ function isAuthorized(ctx) {
   return ctx.from?.id === ALLOWED_USER_ID;
 }
 
+function getModel(userId) {
+  return userModels.get(userId) || DEFAULT_MODEL;
+}
+
 // --- Command Handlers ---
 
 bot.command('start', async (ctx) => {
   if (!isAuthorized(ctx)) return;
   await ctx.reply('🛸 WA-Drone is online. What do you need?');
+});
+
+bot.command('model', async (ctx) => {
+  if (!isAuthorized(ctx)) return;
+  const userId = ctx.from.id;
+  const arg = ctx.message.text.replace('/model', '').trim().toLowerCase();
+  if (!arg) {
+    const current = getModel(userId);
+    await ctx.reply(`Current model: ${current}\nAvailable: ${VALID_MODELS.join(', ')}`);
+    return;
+  }
+  if (!VALID_MODELS.includes(arg)) {
+    await ctx.reply(`Invalid model. Available: ${VALID_MODELS.join(', ')}`);
+    return;
+  }
+  userModels.set(userId, arg);
+  await ctx.reply(`Model switched to: ${arg}`);
 });
 
 bot.command('clear', async (ctx) => {
@@ -889,7 +918,7 @@ async function handleTextMessage(ctx) {
       '--print',
       '--output-format', 'stream-json',
       '--verbose',
-      '--model', 'sonnet',
+      '--model', getModel(ctx.from?.id || userId),
       ...sessionArgs,
       '--system-prompt', systemPrompt,
     ];

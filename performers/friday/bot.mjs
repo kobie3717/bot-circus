@@ -17,7 +17,7 @@ import { sendEmail, verifySmtp } from './email-sender.mjs';
 import { fullDashboard, serverDashboard } from './dashboards.mjs';
 import { executeAction, listActions, getAction } from './actions.mjs';
 import { buildMemoryContext, autoStoreConversation, storeMemory, searchMemory } from './memory-bridge.mjs';
-import { circusRegister, circusJoinRooms, startHeartbeat, buildPreferenceContext, detectPreferenceSignals, publishPreference, getRelevantSharedKnowledge, writeSharedKnowledge, shouldShareKnowledge, writeCorrection, detectCorrectionSignal, registerTaskHandler, startTaskInboxPoller, submitTask, getAgentId, enableAutoReconnect } from './circus-bridge.mjs';
+import { circusRegister, joinTroupe, circusJoinRooms, startHeartbeat, buildPreferenceContext, detectPreferenceSignals, publishPreference, getRelevantSharedKnowledge, writeSharedKnowledge, shouldShareKnowledge, writeCorrection, detectCorrectionSignal, registerTaskHandler, startTaskInboxPoller, submitTask, getAgentId, enableAutoReconnect } from './circus-bridge.mjs';
 import { isDuplicate } from '../../lib/dedupe.mjs';
 import { gem2Check } from '../../lib/gem2-gateway.mjs';
 
@@ -66,6 +66,11 @@ const botReplyTracker = new Map();
 const BOT_REPLY_COOLDOWN_MS = 3000;
 const BOT_MAX_DEPTH = 5;
 
+// Per-user model selection
+const VALID_MODELS = ['haiku', 'sonnet', 'opus', 'fable'];
+const DEFAULT_MODEL = 'sonnet';
+const userModels = new Map(); // userId -> preferred model
+
 // Active task tracking (userId -> { process, ctx, pendingQueue[] })
 const activeTasks = new Map();
 
@@ -83,7 +88,7 @@ function spawnClaudeWorker(prompt, sessionId, ctx) {
     '--print',
     '--output-format', 'stream-json',
     '--verbose',
-    '--model', 'sonnet',
+    '--model', getModel(ctx.from?.id || 0),
   ];
 
   // Add session args if sessionId provided
@@ -141,6 +146,21 @@ function spawnClaudeWorker(prompt, sessionId, ctx) {
       if (code === 0 || code === null) {
         resolve(stdout || '💁‍♀️ _no response_');
       } else {
+        // If a stored session ID is stale, retry once without --resume (fresh conversation)
+        const sessionMissing = sessionId && /No conversation found with session ID/i.test(stderr);
+        if (sessionMissing) {
+          console.log(`[ClaudeWorker] Stale session ${sessionId} — retrying without --resume`);
+          try {
+            const { handle: h2, promise: p2 } = spawnClaudeWorker(prompt, null, ctx);
+            // swap handle reference so cancel() still works
+            handle._retryHandle = h2;
+            p2.then(resolve, reject);
+            return;
+          } catch (e) {
+            reject(e);
+            return;
+          }
+        }
         const isCancelled = /killed|terminated/i.test(stderr);
         reject(new Error(isCancelled ? 'Task cancelled' : `Claude CLI exited with code ${code}: ${stderr.slice(0, 200)}`));
       }
@@ -417,6 +437,9 @@ registerTaskHandler('whatsapp', async (payload) => {
 circusRegister('Friday', 'friday', ['memory', 'preference', 'inbox', 'messaging'])
   .then(token => {
     if (token) {
+      // Join troupe for scoped memory sharing
+      joinTroupe('telegram-bots').catch(e => console.error('[Circus] troupe join failed:', e.message));
+
       circusJoinRooms(['memory-commons', 'whatsapp', 'payments']);
       startHeartbeat();
       startTaskInboxPoller(60_000);
@@ -458,11 +481,32 @@ function isAuthorized(ctx) {
   return false;
 }
 
+function getModel(userId) {
+  return userModels.get(userId) || DEFAULT_MODEL;
+}
+
 // --- Command Handlers ---
 
 bot.command('start', async (ctx) => {
   if (!isAuthorized(ctx)) return;
   await ctx.reply('💁‍♀️ Friday is online. What do you need?');
+});
+
+bot.command('model', async (ctx) => {
+  if (!isAuthorized(ctx)) return;
+  const userId = ctx.from.id;
+  const arg = ctx.message.text.replace('/model', '').trim().toLowerCase();
+  if (!arg) {
+    const current = getModel(userId);
+    await ctx.reply(`Current model: ${current}\nAvailable: ${VALID_MODELS.join(', ')}`);
+    return;
+  }
+  if (!VALID_MODELS.includes(arg)) {
+    await ctx.reply(`Invalid model. Available: ${VALID_MODELS.join(', ')}`);
+    return;
+  }
+  userModels.set(userId, arg);
+  await ctx.reply(`Model switched to: ${arg}`);
 });
 
 bot.command('stop', async (ctx) => {
@@ -1104,7 +1148,7 @@ bot.on('message:text', async (ctx, next) => {
   try {
     console.log(`[b2b] spawning Claude for task_id=${taskId}`);
     const claudeProcess = spawn(CLAUDE_CLI_PATH, [
-      '--print', '--output-format', 'stream-json', '--verbose', '--model', 'sonnet',
+      '--print', '--output-format', 'stream-json', '--verbose', '--model', getModel(ctx.from?.id || 0),
     ], { cwd: CLAUDE_WORKING_DIR, stdio: ['pipe', 'pipe', 'pipe'] });
     console.log(`[b2b] Claude spawned pid=${claudeProcess.pid}`);
     claudeProcess.stdin.write(task + '\n');
@@ -1445,7 +1489,7 @@ async function handleTextMessage(ctx) {
       '--print',
       '--output-format', 'stream-json',
       '--verbose',
-      '--model', 'sonnet',
+      '--model', getModel(ctx.from?.id || userId),
       ...sessionArgs,
     ];
     // Token saver: only inject system prompt on NEW sessions.
@@ -1587,7 +1631,7 @@ bot.use(async (ctx, next) => {
   try {
     // Run Claude CLI without session (guest queries are stateless)
     const claudeProcess = spawn(CLAUDE_CLI_PATH, [
-      '--print', '--output-format', 'stream-json', '--verbose', '--model', 'sonnet',
+      '--print', '--output-format', 'stream-json', '--verbose', '--model', getModel(callerUser?.id || 0),
     ], { cwd: CLAUDE_WORKING_DIR, stdio: ['pipe', 'pipe', 'pipe'] });
 
     claudeProcess.stdin.write(text + '\n');

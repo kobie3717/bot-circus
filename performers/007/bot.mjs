@@ -12,7 +12,7 @@ import { getOrCreateSession, clearSession, getSessionInfo, cleanExpiredSessions 
 import { addWatch, removeWatch, getWatchlist, updateLastChecked, saveReport, getRecentReports, getStats } from './watchlist.mjs';
 import cron from 'node-cron';
 import { buildMemoryContext, autoStoreConversation } from './memory-bridge.mjs';
-import { circusRegister, circusJoinRooms, startHeartbeat, buildPreferenceContext, detectPreferenceSignals, publishPreference, getRelevantSharedKnowledge, writeSharedKnowledge, shouldShareKnowledge, writeCorrection, detectCorrectionSignal, registerTaskHandler, startTaskInboxPoller, submitTask, getAgentId, enableAutoReconnect } from './circus-bridge.mjs';
+import { circusRegister, joinTroupe, circusJoinRooms, startHeartbeat, buildPreferenceContext, detectPreferenceSignals, publishPreference, getRelevantSharedKnowledge, writeSharedKnowledge, shouldShareKnowledge, writeCorrection, detectCorrectionSignal, registerTaskHandler, startTaskInboxPoller, submitTask, getAgentId, enableAutoReconnect } from './circus-bridge.mjs';
 import { isDuplicate } from '../../lib/dedupe.mjs';
 import { gem2Check } from '../../lib/gem2-gateway.mjs';
 
@@ -47,6 +47,11 @@ const bot = new Bot(BOT_TOKEN);
 
 // Record bot startup time for stale message filter
 const BOT_START_TIME = Date.now();
+
+// Per-user model selection
+const VALID_MODELS = ['haiku', 'sonnet', 'opus', 'fable'];
+const DEFAULT_MODEL = 'sonnet';
+const userModels = new Map(); // userId -> preferred model
 
 // Bot-to-bot loop prevention
 const botReplyTracker = new Map();
@@ -87,6 +92,10 @@ function isAuthorized(ctx) {
   return false;
 }
 
+function getModel(userId) {
+  return userModels.get(userId) || DEFAULT_MODEL;
+}
+
 function splitMessage(text, maxLength = 4096) {
   const chunks = [];
   let remaining = text;
@@ -119,6 +128,23 @@ function startTypingIndicator(ctx) {
 bot.command('start', async (ctx) => {
   if (!isAuthorized(ctx)) return;
   await ctx.reply('🕵️  007 Intelligence Agent online.\n\nCommands:\n/intel <topic> - Research topic\n/scavenge <github-url> - Extract patterns from any repo\n/watch <keyword> - Add to watchlist\n/watchlist - View watchlist\n/brief - Generate briefing\n/leads <query> - Find leads\n/competitors - Check competitors\n/mentions - Search for project mentions\n/report <topic> - Detailed report\n/clear - Clear session');
+});
+
+bot.command('model', async (ctx) => {
+  if (!isAuthorized(ctx)) return;
+  const userId = ctx.from.id;
+  const arg = ctx.message.text.replace('/model', '').trim().toLowerCase();
+  if (!arg) {
+    const current = getModel(userId);
+    await ctx.reply(`Current model: ${current}\nAvailable: ${VALID_MODELS.join(', ')}`);
+    return;
+  }
+  if (!VALID_MODELS.includes(arg)) {
+    await ctx.reply(`Invalid model. Available: ${VALID_MODELS.join(', ')}`);
+    return;
+  }
+  userModels.set(userId, arg);
+  await ctx.reply(`Model switched to: ${arg}`);
 });
 
 bot.command('clear', async (ctx) => {
@@ -360,7 +386,7 @@ async function handleClaudeRequest(ctx, userMessage, placeholderText = '🕵️ 
       '--print',
       '--verbose',
       '--output-format', 'stream-json',
-      '--model', 'sonnet',
+      '--model', getModel(ctx.from?.id || 0),
       ...sessionArgs
     ];
     // Token saver: only inject system prompt on NEW sessions.
@@ -584,7 +610,7 @@ bot.on('message:text', async (ctx, next) => {
   try {
     console.log(`[b2b] spawning Claude for task_id=${taskId}`);
     const claudeProcess = spawn(CLAUDE_CLI_PATH, [
-      '--print', '--output-format', 'stream-json', '--verbose', '--model', 'sonnet',
+      '--print', '--output-format', 'stream-json', '--verbose', '--model', getModel(ctx.from?.id || 0),
     ], { cwd: CLAUDE_WORKING_DIR, stdio: ['pipe', 'pipe', 'pipe'] });
     console.log(`[b2b] Claude spawned pid=${claudeProcess.pid}`);
     claudeProcess.stdin.write(intelPrompt + '\n');
@@ -681,7 +707,7 @@ bot.use(async (ctx, next) => {
   };
   try {
     const claudeProcess = spawn(CLAUDE_CLI_PATH, [
-      '--print', '--output-format', 'stream-json', '--verbose', '--model', 'sonnet',
+      '--print', '--output-format', 'stream-json', '--verbose', '--model', getModel(callerUser?.id || 0),
     ], { cwd: CLAUDE_WORKING_DIR, stdio: ['pipe', 'pipe', 'pipe'] });
     claudeProcess.stdin.write(text + '\n');
     claudeProcess.stdin.end();
@@ -799,6 +825,9 @@ async function startWebhook() {
       circusRegister('007', 'intelligence', ['memory', 'preference', 'research', 'monitoring'])
         .then(token => {
           if (token) {
+            // Join troupe for scoped memory sharing
+            joinTroupe('intelligence').catch(e => console.error('[Circus] troupe join failed:', e.message));
+
             circusJoinRooms(['memory-commons', 'engineering']);
             startHeartbeat();
             startTaskInboxPoller(60_000);

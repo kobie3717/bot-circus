@@ -294,6 +294,44 @@ export async function circusJoinRooms(rooms = ['memory-commons']) {
   }
 }
 
+/**
+ * Join a Circus troupe for scoped memory sharing.
+ * @param {string} troupeId
+ * @returns {Promise<boolean>}
+ */
+export async function joinTroupe(troupeId) {
+  if (!_ringToken) {
+    console.warn('[Circus] Not registered — skipping troupe join');
+    return false;
+  }
+
+  try {
+    const res = await fetch(`${CIRCUS_URL}/api/v1/troupes/${troupeId}/join`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${_ringToken}`
+      },
+      signal: AbortSignal.timeout(5000)
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      console.log(`[Circus] ✅ Joined troupe: ${troupeId}`);
+      return true;
+    } else if (res.status === 400 || res.status === 409) {
+      console.log(`[Circus] Already member of troupe: ${troupeId}`);
+      return true;
+    } else {
+      console.warn(`[Circus] Join troupe ${troupeId} failed ${res.status}: ${await res.text()}`);
+      return false;
+    }
+  } catch (err) {
+    console.error('[Circus] joinTroupe error (non-fatal):', err.message);
+    return false;
+  }
+}
+
 let _heartbeatHandle = null;
 let _lastRooms = [];
 let _heartbeatFailures = 0;

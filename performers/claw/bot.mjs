@@ -22,7 +22,7 @@ import { updateContext, getContext, getTopicHistory, getTopicStats, clearContext
 import { shouldAlert, sendAlert, getRecentAlerts, getAlertStats, muteAlerts, getMuteStatus, flushQueuedAlerts } from '../../lib/proactive-alerts.mjs';
 import { captureSessionSnapshot, loadSessionContext, formatSessionContext } from '../../lib/handoff.mjs';
 import { enqueueJob, getJobStatus, listJobs, processQueue, getQueueStats } from '../../lib/queue.mjs';
-import { circusRegister, buildPreferenceContext, detectPreferenceSignals, publishPreference, getRelevantSharedKnowledge, writeSharedKnowledge, shouldShareKnowledge, writeCorrection, detectCorrectionSignal, registerTaskHandler, startTaskInboxPoller, submitTask, getAgentId } from './circus-bridge.mjs';
+import { circusRegister, joinTroupe, buildPreferenceContext, detectPreferenceSignals, publishPreference, getRelevantSharedKnowledge, writeSharedKnowledge, shouldShareKnowledge, writeCorrection, detectCorrectionSignal, registerTaskHandler, startTaskInboxPoller, submitTask, getAgentId } from './circus-bridge.mjs';
 import { isDuplicate, getDedupeStats } from './dedupe.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -66,6 +66,11 @@ console.log(`Timeout: ${CLAUDE_TIMEOUT / 1000}s`);
 
 // Grammy bot — no special config needed
 const bot = new Bot(BOT_TOKEN);
+
+// Per-user model selection
+const VALID_MODELS = ['haiku', 'sonnet', 'opus', 'fable'];
+const DEFAULT_MODEL = 'sonnet';
+const userModels = new Map(); // userId -> preferred model
 
 // After each long-poll getUpdates returns, wait 2s before the next one.
 
@@ -368,11 +373,32 @@ function isAuthorized(ctx) {
   return ctx.from?.id === ALLOWED_USER_ID;
 }
 
+function getModel(userId) {
+  return userModels.get(userId) || DEFAULT_MODEL;
+}
+
 // --- Command Handlers ---
 
 bot.command('start', async (ctx) => {
   if (!isAuthorized(ctx)) return;
   await ctx.reply('🦀 Claw is online. What do you need?');
+});
+
+bot.command('model', async (ctx) => {
+  if (!isAuthorized(ctx)) return;
+  const userId = ctx.from.id;
+  const arg = ctx.message.text.replace('/model', '').trim().toLowerCase();
+  if (!arg) {
+    const current = getModel(userId);
+    await ctx.reply(`Current model: ${current}\nAvailable: ${VALID_MODELS.join(', ')}`);
+    return;
+  }
+  if (!VALID_MODELS.includes(arg)) {
+    await ctx.reply(`Invalid model. Available: ${VALID_MODELS.join(', ')}`);
+    return;
+  }
+  userModels.set(userId, arg);
+  await ctx.reply(`Model switched to: ${arg}`);
 });
 
 bot.command('clear', async (ctx) => {
@@ -1059,7 +1085,7 @@ Use the Bash tool to clone or read the repo, then summarize key learnings.`;
     const claudeProcess = spawn(CLAUDE_CLI_PATH, [
       '--print',
       '--output-format', 'text',
-      '--model', 'sonnet',
+      '--model', getModel(ctx.from?.id || 0),
       '--system-prompt', systemPrompt,
     ], { cwd: CLAUDE_WORKING_DIR, stdio: ['pipe', 'pipe', 'pipe'] });
 
@@ -1540,7 +1566,7 @@ async function handleTextMessage(ctx) {
       '--print',
       '--output-format', 'stream-json',
       '--verbose',
-      '--model', 'sonnet',
+      '--model', getModel(ctx.from?.id || userId),
       ...sessionArgs,
       '--system-prompt', systemPrompt,
     ];
@@ -1991,6 +2017,9 @@ async function startWebhook() {
       circusRegister('Claw', 'builder', ['memory', 'preference', 'code', 'monitoring'])
         .then(token => {
           if (token) {
+            // Join troupe for scoped memory sharing
+            joinTroupe('telegram-bots').catch(e => console.error('[Circus] troupe join failed:', e.message));
+
             // Register Claw's task handlers
             registerTaskHandler('build', async (payload) => {
               // Log the build request — Claw will see it in logs

@@ -8,7 +8,7 @@ import { spawn, execFile } from 'child_process';
 import { promisify } from 'util';
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
-import { circusRegister, circusJoinRooms, startHeartbeat, buildPreferenceContext, getRelevantSharedKnowledge, writeSharedKnowledge, shouldShareKnowledge, registerTaskHandler, startTaskInboxPoller, enableAutoReconnect } from '../../lib/circus-bridge.mjs';
+import { circusRegister, joinTroupe, circusJoinRooms, startHeartbeat, buildPreferenceContext, getRelevantSharedKnowledge, writeSharedKnowledge, shouldShareKnowledge, registerTaskHandler, startTaskInboxPoller, enableAutoReconnect } from '../../lib/circus-bridge.mjs';
 import { buildMemoryContext, autoStoreConversation } from './memory-bridge.mjs';
 import { dispatch as spawnWorker, poolStats as workerPoolStats } from '../../dispatch.mjs';
 import { getOrCreateSession, clearSession, getSessionInfo, cleanExpiredSessions, getStats } from './sessions.mjs';
@@ -31,6 +31,11 @@ process.on('unhandledRejection', r => console.error('[crash guard]', r?.message 
 const bot = new Bot(BOT_TOKEN);
 const BOT_START = Date.now();
 
+// Per-user model selection
+const VALID_MODELS = ['haiku', 'sonnet', 'opus', 'fable'];
+const DEFAULT_MODEL = 'sonnet';
+const userModels = new Map(); // userId -> preferred model
+
 // Message queue state
 const busyUsers = new Set();
 const userQueues = new Map(); // userId -> [{msg, ctx}]
@@ -51,6 +56,10 @@ const SYSTEM_PROMPT = await readFile(join(__dirname, 'SOUL.md'), 'utf8');
 function isAuthorized(ctx) {
   if (!ALLOWED_USER_ID) return true;
   return ctx.from?.id === ALLOWED_USER_ID;
+}
+
+function getModel(userId) {
+  return userModels.get(userId) || DEFAULT_MODEL;
 }
 
 async function downloadTelegramFile(fileId) {
@@ -82,11 +91,11 @@ async function extractPdfText(pdfPath) {
   return stdout.slice(0, 8000);
 }
 
-async function askClaude(prompt, imagePath = null, sessionId = null, isNew = false) {
+async function askClaude(prompt, imagePath = null, sessionId = null, isNew = false, userId = 0) {
   return new Promise((resolve, reject) => {
     const args = [
       '--print', '--output-format', 'stream-json', '--verbose',
-      '--model', 'sonnet',
+      '--model', getModel(userId),
     ];
 
     // Add session arguments if provided
@@ -151,6 +160,23 @@ bot.command('start', ctx => ctx.reply(
   { parse_mode: 'Markdown' }
 ));
 
+bot.command('model', async (ctx) => {
+  if (!isAuthorized(ctx)) return;
+  const userId = ctx.from.id;
+  const arg = ctx.message.text.replace('/model', '').trim().toLowerCase();
+  if (!arg) {
+    const current = getModel(userId);
+    await ctx.reply(`Current model: ${current}\nAvailable: ${VALID_MODELS.join(', ')}`);
+    return;
+  }
+  if (!VALID_MODELS.includes(arg)) {
+    await ctx.reply(`Invalid model. Available: ${VALID_MODELS.join(', ')}`);
+    return;
+  }
+  userModels.set(userId, arg);
+  await ctx.reply(`Model switched to: ${arg}`);
+});
+
 bot.command('clear', ctx => {
   const cleared = clearSession(ctx.from?.id);
   ctx.reply(cleared ? '🕸️ Session cleared.' : '🕸️ No session to clear.');
@@ -198,7 +224,7 @@ async function handleDesignRequest(ctx, msg, imagePath = null) {
     }, 15000);
 
     try {
-      const reply = await askClaude(fullPrompt, imagePath, sessionId, isNew);
+      const reply = await askClaude(fullPrompt, imagePath, sessionId, isNew, userId);
       clearInterval(typingInterval);
       clearInterval(heartbeat);
 
@@ -349,6 +375,9 @@ console.log('[Circus] Task handlers registered');
 circusRegister('webbs', 'builder')
   .then(token => {
     if (token) {
+      // Join troupe for scoped memory sharing
+      joinTroupe('telegram-bots').catch(e => console.error('[Circus] troupe join failed:', e.message));
+
       circusJoinRooms(['memory-commons', 'engineering']);
       startHeartbeat();
       startTaskInboxPoller(60_000);
