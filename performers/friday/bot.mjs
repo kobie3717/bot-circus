@@ -49,6 +49,14 @@ if (!BOT_TOKEN || !ALLOWED_USER_ID || !CLAUDE_CLI_PATH) {
   process.exit(1);
 }
 
+// Global crash protection — prevent unhandled rejections from killing the process
+process.on('uncaughtException', (err) => {
+  console.error('[CRASH GUARD] Uncaught exception (survived):', err.message);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[CRASH GUARD] Unhandled rejection (survived):', reason?.message || reason);
+});
+
 console.log('💁‍♀️ Starting Friday Bot...');
 console.log(`Allowed user ID: ${ALLOWED_USER_ID}`);
 console.log(`Claude CLI: ${CLAUDE_CLI_PATH}`);
@@ -434,19 +442,23 @@ registerTaskHandler('whatsapp', async (payload) => {
 }, { useWorker: true });
 
 // Register with Circus + start task inbox poller (non-fatal if Circus is down)
-circusRegister('Friday', 'friday', ['memory', 'preference', 'inbox', 'messaging'])
+circusRegister('Friday', 'assistant')
   .then(token => {
     if (token) {
+      console.log('[Circus] ✅ Registration successful, joining troupe...');
       // Join troupe for scoped memory sharing
-      joinTroupe('telegram-bots').catch(e => console.error('[Circus] troupe join failed:', e.message));
+      joinTroupe('telegram-bots')
+        .then(joined => console.log(`[Circus] Troupe join result: ${joined}`))
+        .catch(e => console.error('[Circus] troupe join failed:', e.message));
 
       circusJoinRooms(['memory-commons', 'whatsapp', 'payments']);
       startHeartbeat();
       startTaskInboxPoller(60_000);
+      console.log('[Circus] ✅ Heartbeat and task inbox poller started');
     }
   })
   .catch(err => console.error('[Circus] Startup register failed:', err.message));
-enableAutoReconnect('Friday', 'friday');
+enableAutoReconnect('Friday', 'assistant');
 
 function splitMessage(text, maxLength = 4096) {
   const chunks = [];
