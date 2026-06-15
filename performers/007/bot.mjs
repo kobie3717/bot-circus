@@ -13,9 +13,10 @@ import { addWatch, removeWatch, getWatchlist, updateLastChecked, saveReport, get
 import cron from 'node-cron';
 import { buildMemoryContext, autoStoreConversation } from './memory-bridge.mjs';
 import { circusRegister, joinTroupe, circusJoinRooms, startHeartbeat, buildPreferenceContext, detectPreferenceSignals, publishPreference, getRelevantSharedKnowledge, writeSharedKnowledge, shouldShareKnowledge, writeCorrection, detectCorrectionSignal, registerTaskHandler, startTaskInboxPoller, submitTask, getAgentId, enableAutoReconnect } from './circus-bridge.mjs';
-import { buildExperienceContext } from '../../lib/experience-bridge.mjs';
+import { buildExperienceContext, logExperience, detectTaskType, detectEnvironment } from '../../lib/experience-bridge.mjs';
 import { isDuplicate } from '../../lib/dedupe.mjs';
 import { gem2Check } from '../../lib/gem2-gateway.mjs';
+import { detectSignal, storeFeedback } from '../../lib/learning.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -523,6 +524,32 @@ async function handleClaudeRequest(ctx, userMessage, placeholderText = '🕵️ 
 
     // Auto-store conversation to memory
     await autoStoreConversation(userMessage, response);
+
+    // Detect feedback signal and auto-log experience to Circus
+    try {
+      const signal = detectSignal(userMessage);
+      if (signal) {
+        const responseSummary = response.substring(0, 200);
+        storeFeedback(userMessage, responseSummary, signal);
+        console.log(`[Learning] Captured ${signal} feedback`);
+        // Auto-log to Circus
+        const taskType = detectTaskType(userMessage);
+        const environment = detectEnvironment(userMessage) || 'general';
+        const outcome = signal === 'positive' ? 'success' : 'failure';
+        const confidence = signal === 'positive' ? 0.75 : 0.65;
+        await logExperience({
+          agentId: '007',
+          environment,
+          taskType,
+          outcome,
+          confidence,
+          reason: responseSummary.substring(0, 150)
+        });
+        console.log(`[Circus] Auto-logged ${outcome} experience: ${environment}/${taskType}`);
+      }
+    } catch (expErr) {
+      console.warn('[Circus] Auto-log failed (non-fatal):', expErr.message);
+    }
 
     // Share significant learnings to Circus (cross-agent knowledge)
     try {
