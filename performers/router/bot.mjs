@@ -4,6 +4,7 @@ import { Bot } from 'grammy';
 import { config } from 'dotenv';
 import Anthropic from '@anthropic-ai/sdk';
 import { circusRegister, submitTask } from '../../lib/circus-bridge.mjs';
+import { detectTaskType, detectEnvironment } from '../../lib/experience-bridge.mjs';
 
 // Load environment variables
 config({ override: true });
@@ -76,15 +77,47 @@ if (ANTHROPIC_API_KEY) {
   }
 }
 
-// Register with Circus
+// Register with Circus and save token for experience queries
 (async () => {
   try {
-    await circusRegister('router', 'router');
+    routerToken = await circusRegister('router', 'router');
     console.log('✓ Registered with Circus');
   } catch (err) {
     console.warn('⚠ Circus registration failed (non-fatal):', err.message);
   }
 })();
+
+// Bot ID → Circus agent name mapping
+const BOT_AGENT_IDS = { octo: 'octo', '007': '007', friday: 'friday', claw: 'claw' };
+
+/**
+ * Get experience boost for a bot on a given task/environment from Circus.
+ * Returns 0-25 bonus points based on proven track record.
+ */
+async function getExperienceBoost(botId, taskType, environment) {
+  try {
+    if (!environment || environment === 'general') return 0;
+    const params = new URLSearchParams({ environment, task_type: taskType, min_confidence: '0.6' });
+    // Need auth token — use router's own Circus token if available
+    const res = await fetch(`${CIRCUS_URL}/api/v1/experiences/query?${params}`, {
+      headers: routerToken ? { Authorization: `Bearer ${routerToken}` } : {},
+      signal: AbortSignal.timeout(2000)
+    });
+    if (!res.ok) return 0;
+    const data = await res.json();
+    const experiences = (data.experiences || []).filter(e => e.agent_id?.startsWith(botId));
+    if (!experiences.length) return 0;
+    const top = experiences[0];
+    const boost = Math.round(top.confidence * (top.trust_score / 100) * 25);
+    console.log(`[Router] Circus boost for ${botId}: +${boost} (${taskType}/${environment}, conf=${top.confidence})`);
+    return boost;
+  } catch {
+    return 0; // non-fatal
+  }
+}
+
+// Router's Circus token (set after registration)
+let routerToken = null;
 
 /**
  * Route a task to the best performer using Claude or keyword fallback.
@@ -142,8 +175,14 @@ JSON only: {"botId":"...","botName":"...","score":0-100,"reason":"..."}`;
       if (match) {
         const result = JSON.parse(match[0]);
         if (result.botId && BOTS[result.botId]) {
-          console.log(`[Router] Claude picked: ${result.botId} (${result.score})`);
-          return { ...result, score: result.score || 75 };
+          const baseScore = result.score || 75;
+          // Apply Circus experience boost
+          const taskType = detectTaskType(taskText);
+          const environment = detectEnvironment(taskText) || 'general';
+          const boost = await getExperienceBoost(result.botId, taskType, environment);
+          const finalScore = Math.min(100, baseScore + boost);
+          console.log(`[Router] Claude picked: ${result.botId} (${baseScore}+${boost}=${finalScore})`);
+          return { ...result, score: finalScore, reason: result.reason + (boost ? ` [+${boost} Circus boost]` : '') };
         }
       }
     }
