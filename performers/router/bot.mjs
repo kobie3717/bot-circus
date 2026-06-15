@@ -46,6 +46,7 @@ const BOTS = {
   },
   claw: {
     name: 'Claw',
+    taskPort: 4204,
     token: process.env.CLAW_BOT_TOKEN || '',
     keywords: ['whatsapp', 'email', 'inbox', 'message', 'send', 'contact', 'auction', 'whatsauction']
   },

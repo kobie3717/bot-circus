@@ -1973,6 +1973,37 @@ async function startWebhook() {
       });
     });
 
+    // Task injection server — router POSTs here instead of Telegram self-message
+    const TASK_PORT = 4204;
+    const taskServer = http.createServer(async (req, res) => {
+      if (req.method !== 'POST' || req.url !== '/task') { res.writeHead(404); res.end(); return; }
+      let body = '';
+      req.on('data', chunk => body += chunk);
+      req.on('end', async () => {
+        try {
+          const { message, chatId } = JSON.parse(body);
+          if (!message || !chatId) { res.writeHead(400); res.end('missing fields'); return; }
+          res.writeHead(200); res.end('ok');
+          console.log(`[TaskServer] Received task: "${message.substring(0, 60)}"`);
+          // Build synthetic ctx and call handleTextMessage
+          const syntheticCtx = {
+            chat: { id: chatId },
+            from: { id: chatId },
+            message: { text: message, message_id: Date.now() },
+            reply: (text) => bot.api.sendMessage(chatId, text),
+            replyWithChatAction: () => Promise.resolve(),
+          };
+          await handleTextMessage(syntheticCtx);
+        } catch (err) {
+          console.error('[TaskServer] Error:', err.message);
+          res.writeHead(500); res.end(err.message);
+        }
+      });
+    });
+    taskServer.listen(TASK_PORT, '127.0.0.1', () => {
+      console.log(`✓ Claw task server on 127.0.0.1:${TASK_PORT}`);
+    });
+
     server.listen(WEBHOOK_PORT, '127.0.0.1', () => {
       console.log(`🦀 Webhook server listening on 127.0.0.1:${WEBHOOK_PORT}`);
 
