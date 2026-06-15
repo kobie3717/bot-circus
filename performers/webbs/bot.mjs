@@ -397,7 +397,7 @@ const webbsTaskServer = http.createServer(async (req, res) => {
     try {
       const { message, chatId } = JSON.parse(body);
       if (!message || !chatId) { res.writeHead(400); res.end('missing fields'); return; }
-      res.writeHead(200); res.end('ok');
+      res.writeHead(200); res.end('ok'); // respond immediately; errors logged below
       console.log(`[TaskServer] Received task: "${message.substring(0, 60)}"`);
       const syntheticCtx = {
         chat: { id: chatId },
@@ -406,11 +406,10 @@ const webbsTaskServer = http.createServer(async (req, res) => {
         reply: (text) => bot.api.sendMessage(chatId, text),
         replyWithChatAction: () => Promise.resolve(),
       };
-      // Call dispatch directly — bypassing Telegram routing
-      handleDesignRequest(syntheticCtx, message);
+      handleDesignRequest(syntheticCtx, message).catch(err => console.error('[TaskServer] Handler error:', err.message));
     } catch (err) {
-      console.error('[TaskServer] Error:', err.message);
-      res.writeHead(500); res.end(err.message);
+      console.error('[TaskServer] Parse error:', err.message);
+      if (!res.headersSent) { res.writeHead(500); res.end(err.message); }
     }
   });
 });
