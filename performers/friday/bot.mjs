@@ -3,6 +3,7 @@
 import { Bot, InputFile } from 'grammy';
 import { spawn } from 'child_process';
 import { config } from 'dotenv';
+import http from 'http';
 import { readFile, readdir, writeFile } from 'fs/promises';
 import { existsSync, createReadStream } from 'fs';
 import { join, basename } from 'path';
@@ -1624,6 +1625,67 @@ async function handleTextMessage(ctx) {
 bot.catch((err) => {
   const ctx = err.ctx;
   console.error(`[Friday] Error handling update ${ctx?.update?.update_id}:`, err.error?.message || err.message);
+});
+
+// --- Local Task Injection Server ---
+// Router uses this instead of Telegram self-message (which bots ignore)
+
+const TASK_PORT = 4202; // Friday's task port
+const taskServer = http.createServer(async (req, res) => {
+  if (req.method !== 'POST' || req.url !== '/task') {
+    res.writeHead(404);
+    res.end();
+    return;
+  }
+  let body = '';
+  req.on('data', chunk => body += chunk);
+  req.on('end', async () => {
+    try {
+      const { message, chatId } = JSON.parse(body);
+      if (!message || !chatId) {
+        res.writeHead(400);
+        res.end('missing fields');
+        return;
+      }
+      res.writeHead(200);
+      res.end('ok');
+      console.log(`[TaskServer] Received task: "${message.substring(0, 60)}"`);
+
+      // Process task as if Kobus sent it
+      // Build a synthetic ctx object with minimal needed properties
+      const syntheticCtx = {
+        chat: { id: chatId, type: 'private' },
+        from: { id: ALLOWED_USER_ID },
+        message: {
+          text: message,
+          message_id: Date.now(), // unique ID for this synthetic message
+          date: Math.floor(Date.now() / 1000)
+        },
+        reply: async (text, opts) => {
+          return bot.api.sendMessage(chatId, text, opts);
+        },
+        replyWithChatAction: async (action) => {
+          return bot.api.sendChatAction(chatId, action);
+        },
+        api: bot.api,
+        getFile: () => Promise.reject(new Error('Not available in task mode'))
+      };
+
+      // Call the existing message handler
+      await handleTextMessage(syntheticCtx).catch(err => {
+        console.error('[TaskServer] Handler error:', err.message);
+        bot.api.sendMessage(chatId, `💁‍♀️ Task error: ${err.message}`).catch(() => {});
+      });
+    } catch (err) {
+      console.error('[TaskServer] Error:', err.message);
+      res.writeHead(500);
+      res.end(err.message);
+    }
+  });
+});
+
+taskServer.listen(TASK_PORT, '127.0.0.1', () => {
+  console.log(`✓ Task server listening on 127.0.0.1:${TASK_PORT}`);
 });
 
 // --- Guest Mode (Bot API 10.0) ---

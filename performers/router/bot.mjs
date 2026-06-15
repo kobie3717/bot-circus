@@ -18,11 +18,12 @@ if (!BOT_TOKEN || !KOBUS_CHAT_ID) {
   process.exit(1);
 }
 
-// Bot registry — tokens used to inject tasks via Telegram sendMessage
+// Bot registry — HTTP task ports for direct injection (bypasses Telegram self-message limitation)
 const BOTS = {
   octo: {
     name: 'Octo',
-    token: '7592154182:AAFLzNk1DPTCaYj04kVFaJ5E3TF-Hc_hki8',
+    taskPort: 4201,
+    token: '7592154182:AAFLzNk1DPTCaYj04kVFaJ5E3TF-Hc_hki8', // Fallback for bots without HTTP endpoint
     keywords: ['code', 'debug', 'file', 'fix', 'implement', 'test', 'refactor', 'git', 'bug', 'error',
                'analyze', 'analyse', 'project', 'build', 'write', 'create', 'review', 'pr',
                'vps', 'server', 'relay', 'hydra', 'circus', 'bot', 'script', 'function', 'class',
@@ -30,12 +31,14 @@ const BOTS = {
   },
   '007': {
     name: '007',
+    taskPort: 4203,
     token: '8640295266:AAGouyXZpzDcmPzyrhX4zEA6Ul_qQo-xyPQ',
     keywords: ['research', 'find', 'search', 'look up', 'investigate', 'intel', 'web', 'strategy',
                'data', 'market', 'competitor', 'news', 'price', 'compare', 'best', 'recommend']
   },
   friday: {
     name: 'Friday',
+    taskPort: 4202,
     token: '8290915555:AAHFvm94O0PDHvomLCECbsftP-rbnZeJie8',
     keywords: ['schedule', 'remind', 'monitor', 'alert', 'uptime', 'health check',
                'cron', 'routine', 'daily', 'weekly', 'notify', 'watch']
@@ -193,9 +196,35 @@ bot.on('message:text', async (ctx) => {
     // Reply to Kobus
     await ctx.reply(`🧭 Router → ${botName} (${score})\n${reason}`);
 
-    // Inject task into target bot's Telegram inbox by sending via that bot's token
+    // Inject task into target bot
     const targetBot = BOTS[botId];
-    if (targetBot?.token) {
+
+    // Try HTTP endpoint first (preferred — avoids Telegram self-message limitation)
+    if (targetBot?.taskPort) {
+      try {
+        const res = await fetch(`http://127.0.0.1:${targetBot.taskPort}/task`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: messageText,
+            chatId: KOBUS_CHAT_ID
+          }),
+          signal: AbortSignal.timeout(5000)
+        });
+
+        if (res.ok) {
+          console.log(`[Router] Task injected to ${botId} via HTTP (port ${targetBot.taskPort})`);
+        } else {
+          const err = await res.text();
+          console.error(`[Router] HTTP inject failed for ${botId}:`, err);
+          await ctx.reply(`⚠ ${botName} HTTP injection failed: ${err}`);
+        }
+      } catch (err) {
+        console.error(`[Router] HTTP inject error for ${botId}:`, err.message);
+        await ctx.reply(`⚠ ${botName} unreachable (port ${targetBot.taskPort}). Check if bot is running.`);
+      }
+    } else if (targetBot?.token) {
+      // Fallback to Telegram API for bots without HTTP endpoint (e.g., Claw)
       const tgUrl = `https://api.telegram.org/bot${targetBot.token}/sendMessage`;
       const res = await fetch(tgUrl, {
         method: 'POST',
@@ -205,10 +234,12 @@ bot.on('message:text', async (ctx) => {
       if (!res.ok) {
         const err = await res.text();
         console.error(`[Router] Telegram inject failed for ${botId}:`, err);
-        await ctx.reply(`⚠ ${botName} couldn't receive the task. Message them directly.`);
+        await ctx.reply(`⚠ ${botName} couldn't receive the task via Telegram. Message them directly.`);
+      } else {
+        console.log(`[Router] Task injected to ${botId} via Telegram API`);
       }
     } else {
-      await ctx.reply(`⚠ No token for ${botName}. Message them directly.`);
+      await ctx.reply(`⚠ No injection method for ${botName}. Message them directly.`);
     }
   } catch (err) {
     console.error('[Router] Error handling message:', err);
