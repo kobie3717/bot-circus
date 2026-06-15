@@ -17,7 +17,7 @@ import { fullDashboard, serverDashboard } from '../../lib/dashboards.mjs';
 import { executeAction, listActions, getAction } from '../../lib/actions.mjs';
 import { buildMemoryContext, autoStoreConversation, storeMemory, searchMemory } from '../../lib/memory-bridge.mjs';
 import { detectSignal, storeFeedback, buildFeedbackContext, getStats as getLearningStats, getTopPatterns } from '../../lib/learning.mjs';
-import { buildExperienceContext } from '../../lib/experience-bridge.mjs';
+import { buildExperienceContext, logExperience, detectTaskType, detectEnvironment } from '../../lib/experience-bridge.mjs';
 import { addTask, removeTask, toggleTask, listTasks, startScheduler, addHeartbeatTask, getTask } from '../../lib/tasks.mjs';
 import { updateContext, getContext, getTopicHistory, getTopicStats, clearContext } from '../../lib/context.mjs';
 import { shouldAlert, sendAlert, getRecentAlerts, getAlertStats, muteAlerts, getMuteStatus, flushQueuedAlerts } from '../../lib/proactive-alerts.mjs';
@@ -1848,6 +1848,26 @@ async function handleTextMessage(ctx) {
       const responseSummary = response.substring(0, 200);
       storeFeedback(userMessage, responseSummary, signal);
       console.log(`[Learning] Captured ${signal} feedback`);
+
+      // Auto-log experience to Circus based on feedback signal
+      try {
+        const taskType = detectTaskType(userMessage);
+        const environment = detectEnvironment(userMessage) || 'general';
+        const outcome = signal === 'positive' ? 'success' : 'failure';
+        const confidence = signal === 'positive' ? 0.75 : 0.65;
+        const agentId = getAgentId();
+        await logExperience({
+          agentId,
+          environment,
+          taskType,
+          outcome,
+          confidence,
+          reason: responseSummary.substring(0, 150)
+        });
+        console.log(`[Circus] Auto-logged ${outcome} experience: ${environment}/${taskType}`);
+      } catch (expErr) {
+        console.warn('[Circus] Auto-log failed (non-fatal):', expErr.message);
+      }
     }
 
     // 4. Auto-store conversation in AI-IQ memory
