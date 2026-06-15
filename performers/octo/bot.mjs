@@ -17,12 +17,13 @@ import { fullDashboard, serverDashboard } from '../../lib/dashboards.mjs';
 import { executeAction, listActions, getAction } from '../../lib/actions.mjs';
 import { buildMemoryContext, autoStoreConversation, storeMemory, searchMemory } from '../../lib/memory-bridge.mjs';
 import { detectSignal, storeFeedback, buildFeedbackContext, getStats as getLearningStats, getTopPatterns } from '../../lib/learning.mjs';
+import { buildExperienceContext } from '../../lib/experience-bridge.mjs';
 import { addTask, removeTask, toggleTask, listTasks, startScheduler, addHeartbeatTask, getTask } from '../../lib/tasks.mjs';
 import { updateContext, getContext, getTopicHistory, getTopicStats, clearContext } from '../../lib/context.mjs';
 import { shouldAlert, sendAlert, getRecentAlerts, getAlertStats, muteAlerts, getMuteStatus, flushQueuedAlerts } from '../../lib/proactive-alerts.mjs';
 import { captureSessionSnapshot, loadSessionContext, formatSessionContext } from '../../lib/handoff.mjs';
 import { enqueueJob, getJobStatus, listJobs, processQueue, getQueueStats } from '../../lib/queue.mjs';
-import { circusRegister, joinTroupe, buildPreferenceContext, detectPreferenceSignals, publishPreference, getRelevantSharedKnowledge, writeSharedKnowledge, shouldShareKnowledge, writeCorrection, detectCorrectionSignal, registerTaskHandler, startTaskInboxPoller, submitTask, getAgentId } from './circus-bridge.mjs';
+import { circusRegister, joinTroupe, buildPreferenceContext, detectPreferenceSignals, publishPreference, getRelevantSharedKnowledge, writeSharedKnowledge, shouldShareKnowledge, writeCorrection, detectCorrectionSignal, registerTaskHandler, startTaskInboxPoller, startHeartbeat, submitTask, getAgentId } from './circus-bridge.mjs';
 import { spawnBot, loadManagedBots, killBot } from '../../lib/factory.mjs';
 import { startOvernightRun, stopOvernightRun, getOvernightStatus } from '../../lib/overnight.mjs';
 
@@ -220,6 +221,9 @@ async function buildSystemPrompt(userMessage = '', chatId = null) {
   // Learning feedback context (past feedback on similar tasks)
   const feedbackContext = userMessage ? buildFeedbackContext(userMessage) : '';
 
+  // Peer experience context (what other bots learned on similar tasks)
+  const experienceContext = userMessage ? await buildExperienceContext(userMessage) : '';
+
   // Recent message context (last 3 messages in this conversation)
   const recentContext = chatId ? getRecentContext(chatId) : '';
 
@@ -304,6 +308,7 @@ ${lastSessionContext}
 ${recentContext}
 ${aiiqContext}
 ${feedbackContext}
+${experienceContext}
 
 ## TOOLS.md
 ${tools}
@@ -2104,6 +2109,24 @@ async function startPolling() {
   addHeartbeatTask(ALLOWED_USER_ID);
   console.log('🐙 Octo is online and listening (polling mode)!');
   console.log('🐙 All systems online. Monitoring active.');
+
+  // Register with Circus (non-fatal)
+  circusRegister('Octo', 'assistant', ['memory', 'preference', 'code', 'monitoring'])
+    .then(token => {
+      if (token) {
+        startHeartbeat();
+        joinTroupe('telegram-bots').catch(e => console.error('[Circus] troupe join failed:', e.message));
+        registerTaskHandler('build', async (payload) => {
+          const brief = payload.brief || payload.description || JSON.stringify(payload);
+          console.log(`[Circus] Build task received:\n${brief}`);
+          return { received: true, brief };
+        });
+        startTaskInboxPoller();
+        console.log('[Circus] ✅ Octo registered, heartbeat + task poller started');
+      }
+    })
+    .catch(e => console.error('[Circus] Registration failed (non-fatal):', e.message));
+
   await bot.start();
 }
 
