@@ -22,7 +22,7 @@ import { updateContext, getContext, getTopicHistory, getTopicStats, clearContext
 import { shouldAlert, sendAlert, getRecentAlerts, getAlertStats, muteAlerts, getMuteStatus, flushQueuedAlerts } from '../../lib/proactive-alerts.mjs';
 import { captureSessionSnapshot, loadSessionContext, formatSessionContext } from '../../lib/handoff.mjs';
 import { enqueueJob, getJobStatus, listJobs, processQueue, getQueueStats } from '../../lib/queue.mjs';
-import { circusRegister, joinTroupe, buildPreferenceContext, detectPreferenceSignals, publishPreference, getRelevantSharedKnowledge, writeSharedKnowledge, shouldShareKnowledge, writeCorrection, detectCorrectionSignal, registerTaskHandler, startTaskInboxPoller, submitTask, getAgentId } from './circus-bridge.mjs';
+import { circusRegister, joinTroupe, buildPreferenceContext, detectPreferenceSignals, publishPreference, getRelevantSharedKnowledge, writeSharedKnowledge, shouldShareKnowledge, writeCorrection, detectCorrectionSignal, registerTaskHandler, startTaskInboxPoller, startHeartbeat, submitTask, getAgentId } from './circus-bridge.mjs';
 import { isDuplicate, getDedupeStats } from './dedupe.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -1973,8 +1973,8 @@ async function startWebhook() {
       });
     });
 
-    server.listen(WEBHOOK_PORT, () => {
-      console.log(`🦀 Webhook server listening on port ${WEBHOOK_PORT}`);
+    server.listen(WEBHOOK_PORT, '127.0.0.1', () => {
+      console.log(`🦀 Webhook server listening on 127.0.0.1:${WEBHOOK_PORT}`);
 
       // Add built-in heartbeat task
       addHeartbeatTask(ALLOWED_USER_ID);
@@ -2014,11 +2014,14 @@ async function startWebhook() {
       console.log('🦀 All systems online. Monitoring active.');
 
       // Register with Circus + start task inbox poller (non-fatal if Circus is down)
-      circusRegister('Claw', 'builder', ['memory', 'preference', 'code', 'monitoring'])
+      circusRegister('Claw', 'builder')
         .then(token => {
           if (token) {
+            console.log('[Circus] ✅ Registration successful, joining troupe...');
             // Join troupe for scoped memory sharing
-            joinTroupe('telegram-bots').catch(e => console.error('[Circus] troupe join failed:', e.message));
+            joinTroupe('telegram-bots')
+              .then(joined => console.log(`[Circus] Troupe join result: ${joined}`))
+              .catch(e => console.error('[Circus] troupe join failed:', e.message));
 
             // Register Claw's task handlers
             registerTaskHandler('build', async (payload) => {
@@ -2034,8 +2037,10 @@ async function startWebhook() {
               return { received: true, target };
             });
 
-            // Start polling inbox every 60s
+            // Start heartbeat and polling
+            startHeartbeat();
             startTaskInboxPoller(60_000);
+            console.log('[Circus] ✅ Heartbeat and task inbox poller started');
           }
         })
         .catch(err => console.error('[Circus] Startup register failed:', err.message));
