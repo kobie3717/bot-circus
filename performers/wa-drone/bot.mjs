@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import http from 'node:http';
 import { Bot } from 'grammy';
 import { spawn } from 'child_process';
 import { config } from 'dotenv';
@@ -1059,6 +1060,36 @@ async function withDnsRetry(fn, { maxAttempts = 10, baseDelayMs = 5000 } = {}) {
     }
   }
 }
+
+// Task injection server — router POSTs here instead of Telegram self-message
+const WA_DRONE_TASK_PORT = 4205;
+const waDroneTaskServer = http.createServer(async (req, res) => {
+  if (req.method !== 'POST' || req.url !== '/task') { res.writeHead(404); res.end(); return; }
+  let body = '';
+  req.on('data', chunk => body += chunk);
+  req.on('end', async () => {
+    try {
+      const { message, chatId } = JSON.parse(body);
+      if (!message || !chatId) { res.writeHead(400); res.end('missing fields'); return; }
+      res.writeHead(200); res.end('ok');
+      console.log(`[TaskServer] Received task: "${message.substring(0, 60)}"`);
+      const syntheticCtx = {
+        chat: { id: chatId },
+        from: { id: chatId },
+        message: { text: message, message_id: Date.now(), date: Math.floor(Date.now() / 1000) },
+        reply: (text) => bot.api.sendMessage(chatId, text),
+        replyWithChatAction: () => Promise.resolve(),
+      };
+      await handleTextMessage(syntheticCtx);
+    } catch (err) {
+      console.error('[TaskServer] Error:', err.message);
+      res.writeHead(500); res.end(err.message);
+    }
+  });
+});
+waDroneTaskServer.listen(WA_DRONE_TASK_PORT, '127.0.0.1', () => {
+  console.log(`✓ WA-Drone task server on 127.0.0.1:${WA_DRONE_TASK_PORT}`);
+});
 
 withDnsRetry(startBot).catch(err => {
   console.error('💁‍♀️ Startup failed after retries:', err.message);

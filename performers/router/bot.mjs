@@ -50,6 +50,18 @@ const BOTS = {
     token: process.env.CLAW_BOT_TOKEN || '',
     keywords: ['whatsapp', 'email', 'inbox', 'message', 'send', 'contact', 'auction', 'whatsauction']
   },
+  'wa-drone': {
+    name: 'WA-Drone',
+    taskPort: 4205,
+    token: '',
+    keywords: ['transcribe', 'voice', 'audio', 'whatsapp message', 'wa message', 'drone', 'automate whatsapp']
+  },
+  webbs: {
+    name: 'Webbs',
+    taskPort: 4206,
+    token: '',
+    keywords: ['design', 'ui', 'ux', 'frontend', 'css', 'layout', 'screenshot', 'visual', 'figma', 'mockup', 'website', 'landing page', 'html']
+  },
 };
 
 console.log('🧭 Starting Router Bot...');
@@ -89,7 +101,7 @@ if (ANTHROPIC_API_KEY) {
 })();
 
 // Bot ID → Circus agent name mapping
-const BOT_AGENT_IDS = { octo: 'octo', '007': '007', friday: 'friday', claw: 'claw' };
+const BOT_AGENT_IDS = { octo: 'octo', '007': '007', friday: 'friday', claw: 'claw', 'wa-drone': 'wa-drone', webbs: 'webbs' };
 
 /**
  * Get experience boost for a bot on a given task/environment from Circus.
@@ -135,6 +147,8 @@ Bots:
 - 007: research, web searches, market intel, news, comparisons
 - friday: scheduling, reminders, monitoring, alerts, watch tasks
 - claw: WhatsApp, email, inbox, auctions, send messages
+- wa-drone: WhatsApp automation, voice transcription, WA message processing
+- webbs: design, UI/UX, frontend, CSS, layouts, screenshots, mockups, websites
 
 Task: "${taskText}"
 

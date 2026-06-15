@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import http from 'node:http';
 import { Bot, InputFile } from 'grammy';
 import { config } from 'dotenv';
 import { writeFile, unlink, readFile } from 'fs/promises';
@@ -385,3 +386,34 @@ circusRegister('webbs', 'builder')
   })
   .catch(e => console.log('[circus] registration skipped:', e.message));
 enableAutoReconnect('webbs', 'builder');
+
+// Task injection server — router POSTs here instead of Telegram self-message
+const WEBBS_TASK_PORT = 4206;
+const webbsTaskServer = http.createServer(async (req, res) => {
+  if (req.method !== 'POST' || req.url !== '/task') { res.writeHead(404); res.end(); return; }
+  let body = '';
+  req.on('data', chunk => body += chunk);
+  req.on('end', async () => {
+    try {
+      const { message, chatId } = JSON.parse(body);
+      if (!message || !chatId) { res.writeHead(400); res.end('missing fields'); return; }
+      res.writeHead(200); res.end('ok');
+      console.log(`[TaskServer] Received task: "${message.substring(0, 60)}"`);
+      const syntheticCtx = {
+        chat: { id: chatId },
+        from: { id: ALLOWED_USER_ID || chatId },
+        message: { text: message, message_id: Date.now(), date: Math.floor(Date.now() / 1000) },
+        reply: (text) => bot.api.sendMessage(chatId, text),
+        replyWithChatAction: () => Promise.resolve(),
+      };
+      // Call dispatch directly — bypassing Telegram routing
+      handleDesignRequest(syntheticCtx, message);
+    } catch (err) {
+      console.error('[TaskServer] Error:', err.message);
+      res.writeHead(500); res.end(err.message);
+    }
+  });
+});
+webbsTaskServer.listen(WEBBS_TASK_PORT, '127.0.0.1', () => {
+  console.log(`✓ Webbs task server on 127.0.0.1:${WEBBS_TASK_PORT}`);
+});
