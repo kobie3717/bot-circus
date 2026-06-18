@@ -17,7 +17,7 @@ import { fullDashboard, serverDashboard } from '../../lib/dashboards.mjs';
 import { executeAction, listActions, getAction } from '../../lib/actions.mjs';
 import { buildMemoryContext, autoStoreConversation, storeMemory, searchMemory } from '../../lib/memory-bridge.mjs';
 import { detectSignal, storeFeedback, buildFeedbackContext, getStats as getLearningStats, getTopPatterns } from '../../lib/learning.mjs';
-import { buildExperienceContext, logExperience, detectTaskType, detectEnvironment } from '../../lib/experience-bridge.mjs';
+import { buildExperienceContext, logExperience, detectTaskType, detectEnvironment, setCircusToken } from '../../lib/experience-bridge.mjs';
 import { addTask, removeTask, toggleTask, listTasks, startScheduler, addHeartbeatTask, getTask } from '../../lib/tasks.mjs';
 import { updateContext, getContext, getTopicHistory, getTopicStats, clearContext } from '../../lib/context.mjs';
 import { shouldAlert, sendAlert, getRecentAlerts, getAlertStats, muteAlerts, getMuteStatus, flushQueuedAlerts } from '../../lib/proactive-alerts.mjs';
@@ -2129,6 +2129,7 @@ async function startWebhook() {
       circusRegister('Octo', 'builder', ['memory', 'preference', 'code', 'monitoring'])
         .then(token => {
           if (token) {
+            setCircusToken(token); // Wire ring token into experience-bridge
             // Join troupe for scoped memory sharing
             joinTroupe('telegram-bots').catch(e => console.error('[Circus] troupe join failed:', e.message));
 
@@ -2197,6 +2198,7 @@ async function startPolling() {
   circusRegister('Octo', 'assistant', ['memory', 'preference', 'code', 'monitoring'])
     .then(token => {
       if (token) {
+        setCircusToken(token); // Wire ring token into experience-bridge
         startHeartbeat();
         joinTroupe('telegram-bots').catch(e => console.error('[Circus] troupe join failed:', e.message));
         registerTaskHandler('build', async (payload) => {
