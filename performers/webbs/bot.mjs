@@ -233,19 +233,20 @@ async function handleDesignRequest(ctx, msg, imagePath = null) {
       // Auto-store conversation in AI-IQ (non-blocking)
       autoStoreConversation(msg, reply).catch(() => {});
 
-      // Log successful task completion to Circus experience system
+      // Log successful task completion to Circus experience system (relaxed gate)
       try {
         const taskType = detectTaskType(msg) || 'design';
         const environment = detectEnvironment(msg) || 'web-design';
+        // Always log design tasks (relaxed gate)
         await logExperience({
           agentId: getAgentId(),
           environment,
           taskType,
-          outcome: 'success',
-          confidence: 0.8,
+          outcome: 0.8,
+          confidence: 0.75,
           reason: `Design task: ${msg.substring(0, 100)}`
         });
-        console.log(`[Circus] Logged success experience: ${environment}/${taskType}`);
+        console.log(`[Circus] Logged experience: ${environment}/${taskType}`);
       } catch (expErr) {
         console.warn('[Circus] Experience log failed (non-fatal):', expErr.message);
       }
@@ -279,7 +280,7 @@ async function handleDesignRequest(ctx, msg, imagePath = null) {
       console.error(err);
       await ctx.api.editMessageText(ctx.chat.id, thinking.message_id, `❌ ${err.message}`).catch(() => {});
 
-      // Log failure to Circus
+      // Log failure to Circus (relaxed gate)
       try {
         const taskType = detectTaskType(msg) || 'design';
         const environment = detectEnvironment(msg) || 'web-design';
@@ -287,7 +288,7 @@ async function handleDesignRequest(ctx, msg, imagePath = null) {
           agentId: getAgentId(),
           environment,
           taskType,
-          outcome: 'failure',
+          outcome: 0.3,
           confidence: 0.7,
           reason: `Error: ${err.message.substring(0, 100)}`
         });

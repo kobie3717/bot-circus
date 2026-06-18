@@ -1553,18 +1553,40 @@ async function handleTextMessage(ctx) {
     // Auto-store conversation to memory
     await autoStoreConversation(userMessage, response);
 
-    // Detect feedback signal and auto-log experience to Circus
+    // Log experience to Circus for task type detection (relaxed gate)
+    try {
+      const taskType = detectTaskType(userMessage);
+      const environment = detectEnvironment(userMessage) || 'general';
+
+      // Relaxed gate: log if task type is detectable
+      if (taskType !== 'general') {
+        const responseSummary = response.substring(0, 200);
+        await logExperience({
+          agentId: getAgentId(),
+          environment,
+          taskType,
+          outcome: 0.75,
+          confidence: 0.7,
+          reason: responseSummary.substring(0, 150)
+        });
+        console.log(`[Circus] Logged experience: ${environment}/${taskType}`);
+      }
+    } catch (expErr) {
+      console.warn('[Circus] Experience log failed (non-fatal):', expErr.message);
+    }
+
+    // Detect feedback signal (higher confidence for explicit signals)
     try {
       const signal = detectSignal(userMessage);
       if (signal) {
         const responseSummary = response.substring(0, 200);
         storeFeedback(userMessage, responseSummary, signal);
         console.log(`[Learning] Captured ${signal} feedback`);
-        // Auto-log to Circus
+        // Override experience with explicit feedback
         const taskType = detectTaskType(userMessage);
         const environment = detectEnvironment(userMessage) || 'general';
         const outcome = signal === 'positive' ? 'success' : 'failure';
-        const confidence = signal === 'positive' ? 0.75 : 0.65;
+        const confidence = signal === 'positive' ? 0.85 : 0.75;
         await logExperience({
           agentId: getAgentId(),
           environment,
@@ -1573,10 +1595,10 @@ async function handleTextMessage(ctx) {
           confidence,
           reason: responseSummary.substring(0, 150)
         });
-        console.log(`[Circus] Auto-logged ${outcome} experience: ${environment}/${taskType}`);
+        console.log(`[Circus] Override experience with ${signal} feedback`);
       }
     } catch (expErr) {
-      console.warn('[Circus] Auto-log failed (non-fatal):', expErr.message);
+      console.warn('[Circus] Feedback log failed (non-fatal):', expErr.message);
     }
 
     // Share significant learnings to Circus (cross-agent knowledge)

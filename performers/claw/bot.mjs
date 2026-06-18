@@ -16,7 +16,7 @@ import { sendEmail, verifySmtp } from './email-sender.mjs';
 import { fullDashboard, serverDashboard } from './dashboards.mjs';
 import { executeAction, listActions, getAction } from './actions.mjs';
 import { buildMemoryContext, autoStoreConversation, storeMemory, searchMemory } from './memory-bridge.mjs';
-import { detectSignal, storeFeedback, buildFeedbackContext, getStats as getLearningStats, getTopPatterns } from '../../lib/learning.mjs';
+import { detectSignal, storeFeedback, buildFeedbackContext, getStats as getLearningStats, getTopPatterns, detectSatisfaction } from '../../lib/learning.mjs';
 import { addTask, removeTask, toggleTask, listTasks, startScheduler, addHeartbeatTask, getTask } from '../../lib/tasks.mjs';
 import { updateContext, getContext, getTopicHistory, getTopicStats, clearContext } from '../../lib/context.mjs';
 import { shouldAlert, sendAlert, getRecentAlerts, getAlertStats, muteAlerts, getMuteStatus, flushQueuedAlerts } from '../../lib/proactive-alerts.mjs';
@@ -1530,6 +1530,32 @@ async function handleTextMessage(ctx) {
     ).catch(e => console.error('[Circus] Correction write failed:', e.message));
   }
 
+  // Check if this message is satisfaction feedback for previous bot response
+  try {
+    const lastResponse = getLastSummary(chatId);
+    if (lastResponse) {
+      const sat = detectSatisfaction(userMessage);
+      if (sat.signal !== 'neutral' && sat.confidence >= 0.7) {
+        const prevTaskType = detectTaskType(lastResponse.userMessage || '');
+        const prevEnvironment = detectEnvironment(lastResponse.userMessage || '') || 'general';
+        logExperience({
+          agentId: getAgentId(),
+          environment: prevEnvironment,
+          taskType: prevTaskType,
+          outcome: sat.score,
+          confidence: sat.confidence,
+          reason: sat.signal === 'positive'
+            ? `User confirmed: "${sat.evidence}"`
+            : `User rejected: "${sat.evidence}"`
+        }).catch(() => {});
+        console.log(`[Circus] Logged satisfaction feedback: ${sat.signal} (${sat.confidence})`);
+      }
+    }
+  } catch (satErr) {
+    // Non-fatal — satisfaction detection is a nice-to-have
+    console.warn('[Circus] Satisfaction detection failed:', satErr.message);
+  }
+
   // Add user message to context
   addToContext(chatId, 'user', userMessage);
 
@@ -1789,7 +1815,7 @@ async function handleTextMessage(ctx) {
       const expEnvironment = detectEnvironment(userMessage) || 'general';
       const { shouldShare, confidence: shareConfidence } = shouldShareKnowledge(userMessage, response);
 
-      if (shouldShare || shareConfidence > 0.6) {
+      if (expTaskType !== 'general' || shouldShare) {
         const outcome = shareConfidence || 0.75;
         const worked = response
           .replace(/\*\*/g, '')
