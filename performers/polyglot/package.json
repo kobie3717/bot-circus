@@ -1,0 +1,25 @@
+{
+  "name": "@circus/polyglot",
+  "version": "1.0.0",
+  "description": "Translation specialist CLI for SA + Mediterranean languages",
+  "type": "module",
+  "main": "cli.mjs",
+  "bin": {
+    "polyglot": "./cli.mjs"
+  },
+  "scripts": {
+    "test": "node tests/test-polyglot.mjs"
+  },
+  "keywords": [
+    "translation",
+    "cli",
+    "anthropic",
+    "multilingual"
+  ],
+  "author": "Kobus Wentzel",
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.30.1",
+    "dotenv": "^16.4.5"
+  }
+}

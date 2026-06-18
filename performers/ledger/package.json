@@ -1,0 +1,19 @@
+{
+  "name": "ledger",
+  "version": "1.0.0",
+  "description": "Finance/runway specialist for bootstrapped founders",
+  "type": "module",
+  "main": "cli.mjs",
+  "bin": {
+    "ledger": "./cli.mjs"
+  },
+  "scripts": {
+    "test": "node tests/test-ledger.mjs"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.8.0"
+  },
+  "keywords": ["finance", "runway", "pnl", "accounting"],
+  "author": "Kobus Wentzel",
+  "license": "MIT"
+}

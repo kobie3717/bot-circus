@@ -1,0 +1,19 @@
+{
+  "name": "scribe",
+  "version": "1.0.0",
+  "description": "Marketing/content specialist CLI tool for Kobus Wentzel's founder voice",
+  "type": "module",
+  "main": "cli.mjs",
+  "bin": {
+    "scribe": "./cli.mjs"
+  },
+  "scripts": {
+    "test": "node tests/test-scribe.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.30.0",
+    "dotenv": "^16.4.5"
+  },
+  "author": "Kobus Wentzel",
+  "license": "MIT"
+}

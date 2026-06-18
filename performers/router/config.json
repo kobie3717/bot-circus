@@ -1,0 +1,14 @@
+{
+  "contract_version": "1.0",
+  "id": "router",
+  "name": "Router",
+  "telegram_username": "@PLACEHOLDER_router_bot",
+  "runtime": "custom",
+  "secrets": {
+    "provider": "env-file",
+    "path": ".env"
+  },
+  "troupes": [],
+  "sidecars": [],
+  "owner": "kobie3717"
+}

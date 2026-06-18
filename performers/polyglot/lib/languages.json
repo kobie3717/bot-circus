@@ -1,0 +1,49 @@
+{
+  "en": {
+    "name": "English",
+    "region": "global",
+    "register_options": ["formal", "casual", "whatsapp"]
+  },
+  "af": {
+    "name": "Afrikaans",
+    "region": "SA",
+    "register_options": ["formal", "casual", "whatsapp"]
+  },
+  "zu": {
+    "name": "isiZulu",
+    "region": "SA",
+    "register_options": ["formal", "casual"]
+  },
+  "es": {
+    "name": "Spanish",
+    "region": "Med",
+    "variants": ["es-ES (Castilian)", "es-MX (Mexican)"],
+    "register_options": ["formal", "casual"]
+  },
+  "it": {
+    "name": "Italian",
+    "region": "Med",
+    "register_options": ["formal", "casual"]
+  },
+  "fr": {
+    "name": "French",
+    "region": "Med",
+    "register_options": ["formal", "casual"]
+  },
+  "de": {
+    "name": "German",
+    "region": "Med",
+    "register_options": ["formal", "casual"]
+  },
+  "pt": {
+    "name": "Portuguese",
+    "region": "PT/BR",
+    "variants": ["pt-PT", "pt-BR"],
+    "register_options": ["formal", "casual"]
+  },
+  "nl": {
+    "name": "Dutch",
+    "region": "Med",
+    "register_options": ["formal", "casual"]
+  }
+}

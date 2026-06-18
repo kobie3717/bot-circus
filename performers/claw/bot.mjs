@@ -24,7 +24,7 @@ import { captureSessionSnapshot, loadSessionContext, formatSessionContext } from
 import { enqueueJob, getJobStatus, listJobs, processQueue, getQueueStats } from '../../lib/queue.mjs';
 import { circusRegister, joinTroupe, buildPreferenceContext, detectPreferenceSignals, publishPreference, getRelevantSharedKnowledge, writeSharedKnowledge, shouldShareKnowledge, writeCorrection, detectCorrectionSignal, registerTaskHandler, startTaskInboxPoller, startHeartbeat, submitTask, getAgentId } from './circus-bridge.mjs';
 import { isDuplicate, getDedupeStats } from './dedupe.mjs';
-import { setCircusToken } from '../../lib/experience-bridge.mjs';
+import { setCircusToken, logExperience, detectTaskType, detectEnvironment, buildExperienceContext } from '../../lib/experience-bridge.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -335,8 +335,9 @@ async function getSystemPrompt(userMessage = '', chatId = null) {
   const basePrompt = await buildSystemPrompt(userMessage, chatId);
   const circusContext = await buildPreferenceContext();
   // W11: Add shared knowledge context dynamically
+  const experienceContext = userMessage ? await buildExperienceContext(userMessage, getAgentId()) : '';
   const sharedKnowledge = userMessage ? await getRelevantSharedKnowledge(userMessage.slice(0, 500)) : '';
-  return basePrompt + circusContext + sharedKnowledge;
+  return basePrompt + circusContext + experienceContext + sharedKnowledge;
 }
 
 function splitMessage(text, maxLength = 4096) {
@@ -1780,6 +1781,35 @@ async function handleTextMessage(ctx) {
       }
     } catch (circusErr) {
       console.error('[Circus] Knowledge share failed (non-fatal):', circusErr.message);
+    }
+
+    // 6. Log experience for peer learning (DeLM Phase 4)
+    try {
+      const expTaskType = detectTaskType(userMessage);
+      const expEnvironment = detectEnvironment(userMessage) || 'general';
+      const { shouldShare, confidence: shareConfidence } = shouldShareKnowledge(userMessage, response);
+
+      if (shouldShare || shareConfidence > 0.6) {
+        const outcome = shareConfidence || 0.75;
+        const worked = response
+          .replace(/\*\*/g, '')
+          .split('\n')
+          .filter(line => line.trim().length > 20 && !/^(let me|i'll|i'm|okay|sure|i will)/i.test(line.trim()))
+          .slice(0, 1)
+          .join(' ')
+          .slice(0, 150);
+
+        logExperience({
+          agentId: getAgentId(),
+          environment: expEnvironment,
+          taskType: expTaskType,
+          outcome,
+          confidence: Math.min(outcome + 0.1, 0.95),
+          reason: worked || 'Task completed'
+        }).catch(() => {}); // fire and forget, non-fatal
+      }
+    } catch (expErr) {
+      // non-fatal
     }
 
   } catch (error) {
