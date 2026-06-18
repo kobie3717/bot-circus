@@ -24,6 +24,7 @@ import { captureSessionSnapshot, loadSessionContext, formatSessionContext } from
 import { enqueueJob, getJobStatus, listJobs, processQueue, getQueueStats } from '../../lib/queue.mjs';
 import { circusRegister, joinTroupe, buildPreferenceContext, detectPreferenceSignals, publishPreference, getRelevantSharedKnowledge, writeSharedKnowledge, shouldShareKnowledge, writeCorrection, detectCorrectionSignal, registerTaskHandler, startTaskInboxPoller, startHeartbeat, submitTask, getAgentId } from './circus-bridge.mjs';
 import { isDuplicate, getDedupeStats } from './dedupe.mjs';
+import { setCircusToken } from '../../lib/experience-bridge.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -2048,6 +2049,7 @@ async function startWebhook() {
       circusRegister('Claw', 'builder')
         .then(token => {
           if (token) {
+            setCircusToken(token); // Wire ring token into experience-bridge
             console.log('[Circus] ✅ Registration successful, joining troupe...');
             // Join troupe for scoped memory sharing
             joinTroupe('telegram-bots')

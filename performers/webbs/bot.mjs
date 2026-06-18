@@ -9,8 +9,9 @@ import { spawn, execFile } from 'child_process';
 import { promisify } from 'util';
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
-import { circusRegister, joinTroupe, circusJoinRooms, startHeartbeat, buildPreferenceContext, getRelevantSharedKnowledge, writeSharedKnowledge, shouldShareKnowledge, registerTaskHandler, startTaskInboxPoller, enableAutoReconnect } from '../../lib/circus-bridge.mjs';
+import { circusRegister, joinTroupe, circusJoinRooms, startHeartbeat, buildPreferenceContext, getRelevantSharedKnowledge, writeSharedKnowledge, shouldShareKnowledge, registerTaskHandler, startTaskInboxPoller, enableAutoReconnect, getAgentId } from '../../lib/circus-bridge.mjs';
 import { buildMemoryContext, autoStoreConversation } from './memory-bridge.mjs';
+import { logExperience, detectTaskType, detectEnvironment, setCircusToken } from '../../lib/experience-bridge.mjs';
 import { dispatch as spawnWorker, poolStats as workerPoolStats } from '../../dispatch.mjs';
 import { getOrCreateSession, clearSession, getSessionInfo, cleanExpiredSessions, getStats } from './sessions.mjs';
 
@@ -232,6 +233,23 @@ async function handleDesignRequest(ctx, msg, imagePath = null) {
       // Auto-store conversation in AI-IQ (non-blocking)
       autoStoreConversation(msg, reply).catch(() => {});
 
+      // Log successful task completion to Circus experience system
+      try {
+        const taskType = detectTaskType(msg) || 'design';
+        const environment = detectEnvironment(msg) || 'web-design';
+        await logExperience({
+          agentId: getAgentId(),
+          environment,
+          taskType,
+          outcome: 'success',
+          confidence: 0.8,
+          reason: `Design task: ${msg.substring(0, 100)}`
+        });
+        console.log(`[Circus] Logged success experience: ${environment}/${taskType}`);
+      } catch (expErr) {
+        console.warn('[Circus] Experience log failed (non-fatal):', expErr.message);
+      }
+
       // Share significant design learnings to Circus fleet (non-blocking)
       try {
         const { shouldShare, category, domain, confidence, content } = shouldShareKnowledge(msg, reply);
@@ -260,6 +278,23 @@ async function handleDesignRequest(ctx, msg, imagePath = null) {
       clearInterval(heartbeat);
       console.error(err);
       await ctx.api.editMessageText(ctx.chat.id, thinking.message_id, `❌ ${err.message}`).catch(() => {});
+
+      // Log failure to Circus
+      try {
+        const taskType = detectTaskType(msg) || 'design';
+        const environment = detectEnvironment(msg) || 'web-design';
+        await logExperience({
+          agentId: getAgentId(),
+          environment,
+          taskType,
+          outcome: 'failure',
+          confidence: 0.7,
+          reason: `Error: ${err.message.substring(0, 100)}`
+        });
+        console.log(`[Circus] Logged failure experience: ${environment}/${taskType}`);
+      } catch (expErr) {
+        console.warn('[Circus] Experience log failed (non-fatal):', expErr.message);
+      }
     }
   } finally {
     // Cleanup uploaded files
@@ -415,6 +450,7 @@ console.log('[Circus] Task handlers registered');
 circusRegister('webbs', 'builder')
   .then(token => {
     if (token) {
+      setCircusToken(token); // Wire ring token into experience-bridge
       // Join troupe for scoped memory sharing
       joinTroupe('telegram-bots').catch(e => console.error('[Circus] troupe join failed:', e.message));
 

@@ -19,7 +19,7 @@ import { fullDashboard, serverDashboard } from './dashboards.mjs';
 import { executeAction, listActions, getAction } from './actions.mjs';
 import { buildMemoryContext, autoStoreConversation, storeMemory, searchMemory } from './memory-bridge.mjs';
 import { circusRegister, joinTroupe, circusJoinRooms, startHeartbeat, buildPreferenceContext, detectPreferenceSignals, publishPreference, getRelevantSharedKnowledge, writeSharedKnowledge, shouldShareKnowledge, writeCorrection, detectCorrectionSignal, registerTaskHandler, startTaskInboxPoller, submitTask, getAgentId, enableAutoReconnect } from './circus-bridge.mjs';
-import { buildExperienceContext, logExperience, detectTaskType, detectEnvironment } from '../../lib/experience-bridge.mjs';
+import { buildExperienceContext, logExperience, detectTaskType, detectEnvironment, setCircusToken } from '../../lib/experience-bridge.mjs';
 import { isDuplicate } from '../../lib/dedupe.mjs';
 import { gem2Check } from '../../lib/gem2-gateway.mjs';
 import { detectSignal, storeFeedback } from '../../lib/learning.mjs';
@@ -452,6 +452,7 @@ registerTaskHandler('whatsapp', async (payload) => {
 circusRegister('Friday', 'assistant')
   .then(token => {
     if (token) {
+      setCircusToken(token); // Wire ring token into experience-bridge
       console.log('[Circus] ✅ Registration successful, joining troupe...');
       // Join troupe for scoped memory sharing
       joinTroupe('telegram-bots')

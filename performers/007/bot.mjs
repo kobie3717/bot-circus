@@ -13,7 +13,7 @@ import { addWatch, removeWatch, getWatchlist, updateLastChecked, saveReport, get
 import cron from 'node-cron';
 import { buildMemoryContext, autoStoreConversation } from './memory-bridge.mjs';
 import { circusRegister, joinTroupe, circusJoinRooms, startHeartbeat, buildPreferenceContext, detectPreferenceSignals, publishPreference, getRelevantSharedKnowledge, writeSharedKnowledge, shouldShareKnowledge, writeCorrection, detectCorrectionSignal, registerTaskHandler, startTaskInboxPoller, submitTask, getAgentId, enableAutoReconnect } from './circus-bridge.mjs';
-import { buildExperienceContext, logExperience, detectTaskType, detectEnvironment } from '../../lib/experience-bridge.mjs';
+import { buildExperienceContext, logExperience, detectTaskType, detectEnvironment, setCircusToken } from '../../lib/experience-bridge.mjs';
 import { isDuplicate } from '../../lib/dedupe.mjs';
 import { gem2Check } from '../../lib/gem2-gateway.mjs';
 import { detectSignal, storeFeedback } from '../../lib/learning.mjs';
@@ -919,6 +919,7 @@ async function startWebhook() {
       circusRegister('007', 'intelligence', ['memory', 'preference', 'research', 'monitoring'])
         .then(token => {
           if (token) {
+            setCircusToken(token); // Wire ring token into experience-bridge
             // Join troupe for scoped memory sharing
             joinTroupe('intelligence').catch(e => console.error('[Circus] troupe join failed:', e.message));
 
