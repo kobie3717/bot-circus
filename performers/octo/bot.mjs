@@ -2184,14 +2184,16 @@ async function withDnsRetry(fn, { maxAttempts = 10, baseDelayMs = 5000 } = {}) {
 }
 
 async function startPolling() {
+  // Wait 15s at startup so previous process's TCP connection closes on Telegram's side
+  console.log('🐙 Startup delay 15s — waiting for any prior session to close...');
+  await new Promise(r => setTimeout(r, 15000));
+
   await bot.init();
   console.log(`🐙 Bot initialized: @${bot.botInfo.username}`);
   await bot.api.deleteWebhook({ drop_pending_updates: true });
   addHeartbeatTask(ALLOWED_USER_ID);
-  console.log('🐙 Octo is online and listening (polling mode)!');
-  console.log('🐙 All systems online. Monitoring active.');
 
-  // Register with Circus (non-fatal)
+  // Register with Circus (non-fatal, one-time)
   circusRegister('Octo', 'assistant', ['memory', 'preference', 'code', 'monitoring'])
     .then(token => {
       if (token) {
@@ -2208,7 +2210,46 @@ async function startPolling() {
     })
     .catch(e => console.error('[Circus] Registration failed (non-fatal):', e.message));
 
-  await bot.start();
+  console.log('🐙 Octo is online and listening (polling mode)!');
+  console.log('🐙 All systems online. Monitoring active.');
+
+  // Manual polling loop — bypasses Grammy's runner to avoid self-conflict 409s
+  // Grammy's bot.start() can create concurrent getUpdates calls internally.
+  // This loop ensures exactly ONE outstanding getUpdates request at all times.
+  let offset = 0;
+  let pollingActive = true;
+
+  const handleShutdown = () => { pollingActive = false; };
+  process.once('SIGINT', handleShutdown);
+  process.once('SIGTERM', handleShutdown);
+
+  while (pollingActive) {
+    try {
+      const updates = await bot.api.getUpdates({ offset, timeout: 30, limit: 100 });
+      for (const update of updates) {
+        offset = update.update_id + 1;
+        // Process each update via Grammy's middleware pipeline (non-blocking)
+        bot.handleUpdate(update).catch(err => {
+          console.error('🐙 Update handler error:', err.message);
+        });
+      }
+    } catch (err) {
+      const is409 = err.error_code === 409 || err.message?.includes('409');
+      const isNetwork = err.message?.includes('ECONNRESET') || err.message?.includes('ETIMEDOUT') || err.message?.includes('ENOTFOUND');
+
+      if (is409) {
+        console.log('🐙 409 Conflict — waiting 65s for competing session to expire...');
+        await new Promise(r => setTimeout(r, 65000));
+        console.log('🐙 Retrying getUpdates...');
+      } else if (isNetwork) {
+        console.log('🐙 Network error, retrying in 5s:', err.message);
+        await new Promise(r => setTimeout(r, 5000));
+      } else {
+        console.error('🐙 getUpdates fatal error:', err.message);
+        throw err;
+      }
+    }
+  }
 }
 
 const USE_POLLING = process.env.USE_POLLING === 'true';

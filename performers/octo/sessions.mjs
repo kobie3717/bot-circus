@@ -5,7 +5,7 @@ import { randomUUID } from 'crypto';
 import { existsSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
 
-const DB_PATH = '/root/bot-circus/performers/octo/data/sessions.db';
+const DB_PATH = process.env.SESSIONS_DB_PATH || '/root/octo-bot/data/sessions.db';
 
 // Ensure data directory exists
 const dir = dirname(DB_PATH);

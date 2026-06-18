@@ -1565,7 +1565,7 @@ async function handleTextMessage(ctx) {
         const outcome = signal === 'positive' ? 'success' : 'failure';
         const confidence = signal === 'positive' ? 0.75 : 0.65;
         await logExperience({
-          agentId: 'friday',
+          agentId: getAgentId(),
           environment,
           taskType,
           outcome,

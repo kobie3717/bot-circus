@@ -538,7 +538,7 @@ async function handleClaudeRequest(ctx, userMessage, placeholderText = '🕵️ 
         const outcome = signal === 'positive' ? 'success' : 'failure';
         const confidence = signal === 'positive' ? 0.75 : 0.65;
         await logExperience({
-          agentId: '007',
+          agentId: getAgentId(),
           environment,
           taskType,
           outcome,

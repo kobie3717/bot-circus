@@ -358,7 +358,46 @@ bot.on('message:document', async ctx => {
   }
 });
 
-bot.start();
+// Manual polling loop (replaces bot.start() to handle 409 gracefully)
+async function startPolling() {
+  console.log('🕸️ Startup delay 15s — waiting for any prior session to close...');
+  await new Promise(r => setTimeout(r, 15000));
+  await bot.init();
+  console.log(`🕸️ Bot initialized: @${bot.botInfo.username}`);
+  await bot.api.deleteWebhook({ drop_pending_updates: false });
+
+  let offset = 0;
+  let pollingActive = true;
+  process.once('SIGINT', () => { pollingActive = false; });
+  process.once('SIGTERM', () => { pollingActive = false; });
+
+  while (pollingActive) {
+    try {
+      const updates = await bot.api.getUpdates({ offset, timeout: 30, limit: 100 });
+      for (const update of updates) {
+        offset = update.update_id + 1;
+        bot.handleUpdate(update).catch(err => console.error('🕸️ Update handler error:', err.message));
+      }
+    } catch (err) {
+      const is409 = err.error_code === 409 || err.message?.includes('409');
+      const isNetwork = err.message?.includes('ECONNRESET') || err.message?.includes('ETIMEDOUT') || err.message?.includes('ENOTFOUND');
+      if (is409) {
+        console.log('🕸️ 409 Conflict — waiting 65s for competing session to expire...');
+        await new Promise(r => setTimeout(r, 65000));
+      } else if (isNetwork) {
+        await new Promise(r => setTimeout(r, 5000));
+      } else {
+        throw err;
+      }
+    }
+  }
+}
+
+startPolling().catch(err => {
+  console.error('🕸️ Fatal polling error:', err.message);
+  process.exit(1);
+});
+
 console.log('🕸️ webbs bot started');
 
 // Register task handlers unconditionally — no token needed
