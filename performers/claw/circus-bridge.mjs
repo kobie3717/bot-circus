@@ -674,6 +674,15 @@ export async function getRelevantSharedKnowledge(query, { limit = 3 } = {}) {
     const data = await res.json();
     if (!data.results?.length) return '';
 
+    // Expand gisted memories on-demand (DeLM Phase 1)
+    const { unfoldMemory } = await import('../../lib/experience-bridge.mjs');
+    for (const mem of data.results.slice(0, 5)) {
+      if (mem.gist_only === 1 && mem.id) {
+        const expanded = await unfoldMemory(mem.id, 'summary').catch(() => null);
+        if (expanded?.content) mem.content = expanded.content;
+      }
+    }
+
     const lines = data.results.map(r =>
       `- ${r.content} (source: ${r.source_agent}, confidence: ${r.confidence.toFixed(2)})`
     );

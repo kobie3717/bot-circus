@@ -11,7 +11,7 @@ const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 import { circusRegister, joinTroupe, circusJoinRooms, startHeartbeat, buildPreferenceContext, getRelevantSharedKnowledge, writeSharedKnowledge, shouldShareKnowledge, registerTaskHandler, startTaskInboxPoller, enableAutoReconnect, getAgentId } from '../../lib/circus-bridge.mjs';
 import { buildMemoryContext, autoStoreConversation } from './memory-bridge.mjs';
-import { logExperience, detectTaskType, detectEnvironment, setCircusToken } from '../../lib/experience-bridge.mjs';
+import { logExperience, detectTaskType, detectEnvironment, setCircusToken, buildExperienceContext } from '../../lib/experience-bridge.mjs';
 import { dispatch as spawnWorker, poolStats as workerPoolStats } from '../../dispatch.mjs';
 import { getOrCreateSession, clearSession, getSessionInfo, cleanExpiredSessions, getStats } from './sessions.mjs';
 
@@ -203,6 +203,12 @@ async function handleDesignRequest(ctx, msg, imagePath = null) {
     try {
       const shared = await getRelevantSharedKnowledge(msg.slice(0, 500));
       if (shared) circusContext += `\n## Shared Knowledge from Fleet\n${shared}\n`;
+    } catch {}
+
+    // Add experience context from Circus (DeLM Phase 2)
+    try {
+      const experienceContext = await buildExperienceContext(msg, getAgentId()).catch(() => '');
+      if (experienceContext) circusContext += experienceContext;
     } catch {}
 
     // Add memory context from AI-IQ (non-blocking, non-fatal)
